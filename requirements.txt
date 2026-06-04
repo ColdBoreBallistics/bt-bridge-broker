@@ -1,0 +1,2 @@
+# No third-party dependencies — uses only Python 3.11+ stdlib.
+# Python 3.11 or later is required (match statements, type union syntax).
