@@ -2,14 +2,14 @@
 """
 Niimbot B1 / B21 Pro — BLE protocol verification script (DOPE-33).
 
-Connects to a Niimbot printer via the BLE bridge and confirms the GATT
+Connects to a Niimbot printer via the BT bridge agent and confirms the GATT
 service/characteristic UUIDs. For the B21 Pro, also confirms whether the
 protocol matches the B1 (same ISSC UART-over-BLE bridge).
 
 USAGE
 -----
 1. Start ble_server.py on this machine.
-2. Connect the BLE bridge app on Android/iOS.
+2. Connect the BT bridge agent app on Android/iOS.
 3. Run:
        python3 niimbot_b1_verify.py [--host 127.0.0.1] [--port 9876] [--name B21]
 

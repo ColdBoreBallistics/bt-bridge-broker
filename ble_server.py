@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-BLE Bridge Server — BLE Bridge Protocol v1.0
+BT Bridge Broker — BT Bridge Protocol v1.0
 
-Listens for a TCP connection from the mobile BLE bridge app, then lets you
+Listens for a TCP connection from the mobile BT bridge agent app, then lets you
 drive BLE operations interactively or from a test script.
 
 INTERACTIVE USE
@@ -68,7 +68,7 @@ log = logging.getLogger("ble_server")
 
 
 class BleServer:
-    """Async TCP server that speaks the BLE Bridge Protocol."""
+    """Async TCP server that speaks the BT Bridge Protocol."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 9876):
         self.host = host
@@ -207,6 +207,10 @@ class BleServer:
                      "warn": logging.WARNING, "error": logging.ERROR}.get(evt.level, logging.INFO),
                     "APP  %s", evt.message,
                 )
+            case P.Answer():
+                log.info("ANSWER  %s  %s", evt.req_id, "YES" if evt.value else "NO")
+            case P.Dismiss():
+                log.info("DISMISS  %s", evt.req_id)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +227,7 @@ async def _interactive(server: BleServer) -> None:
         req_n += 1
         return f"req{req_n:04d}"
 
-    print("BLE Bridge Server started. Waiting for mobile app to connect…")
+    print("BT Bridge Broker started. Waiting for mobile app to connect…")
     print("Press Ctrl-C to quit.\n")
 
     while True:
@@ -303,11 +307,12 @@ async def _interactive(server: BleServer) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="BLE Bridge Server")
-    parser.add_argument("--port", type=int, default=9876, help="TCP port to listen on (default: 9876)")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
-    parser.add_argument("--log",  default=None,  help="Path to log file (default: stdout only)")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser = argparse.ArgumentParser(description="BT Bridge Broker")
+    parser.add_argument("--port",     type=int, default=9876,  help="TCP port to listen on (default: 9876)")
+    parser.add_argument("--host",     default="0.0.0.0",       help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--log",      default=None,            help="Path to log file (default: stdout only)")
+    parser.add_argument("--debug",    action="store_true",     help="Enable debug logging")
+    parser.add_argument("--headless", action="store_true",     help="Skip interactive prompt — log events and run until killed")
     args = parser.parse_args()
 
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
@@ -324,7 +329,11 @@ def main() -> None:
 
     async def run() -> None:
         await server.start()
-        await _interactive(server)
+        if args.headless:
+            log.info("Headless mode — waiting for mobile app (Ctrl-C to quit)")
+            await asyncio.get_event_loop().create_future()  # run forever
+        else:
+            await _interactive(server)
 
     try:
         asyncio.run(run())

@@ -1,5 +1,5 @@
 """
-BLE Bridge Protocol v1.0 — message dataclasses and serialization.
+BT Bridge Protocol v1.0 — message dataclasses and serialization.
 
 All byte values are transmitted as lowercase hex strings.
 Timestamps are Unix epoch milliseconds.
@@ -116,10 +116,22 @@ class Log:
     message: str
     ts:      int = field(default_factory=_now_ms)
 
+@dataclass
+class Answer:
+    req_id: str
+    value:  bool
+    ts:     int = field(default_factory=_now_ms)
+
+@dataclass
+class Dismiss:
+    req_id: str
+    ts:     int = field(default_factory=_now_ms)
+
 
 Event = (
     ScanResult | Connected | Disconnected | ServicesDiscovered |
-    Notification | ReadResult | WriteResult | Error | Pong | Log
+    Notification | ReadResult | WriteResult | Error | Pong | Log |
+    Answer | Dismiss
 )
 
 
@@ -166,6 +178,12 @@ def cmd_write(address: str, char: str, value: bytes, req_id: str, rsp: bool = Tr
 
 def cmd_ping() -> str:
     return json.dumps({"cmd": "ping"})
+
+def cmd_ask(req_id: str, question: str) -> str:
+    return json.dumps({"cmd": "ask", "req_id": req_id, "question": question})
+
+def cmd_dismiss_all() -> str:
+    return json.dumps({"cmd": "dismiss_all"})
 
 
 # ---------------------------------------------------------------------------
@@ -237,5 +255,9 @@ def parse_event(line: str) -> Event | None:
             return Pong(ts=d.get("ts", _now_ms()))
         case "log":
             return Log(level=d.get("level", "info"), message=d.get("message", ""), ts=d.get("ts", _now_ms()))
+        case "answer":
+            return Answer(req_id=d.get("req_id", ""), value=bool(d.get("value", False)), ts=d.get("ts", _now_ms()))
+        case "dismiss":
+            return Dismiss(req_id=d.get("req_id", ""), ts=d.get("ts", _now_ms()))
         case _:
             return None

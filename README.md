@@ -1,9 +1,9 @@
-# ble-bridge-server
+# bt-bridge-broker
 
-Desktop TCP server for the BLE Bridge test harness. Receives BLE events from a connected
-mobile app ([ble-bridge-android](https://github.com/ColdBoreBallistics/ble-bridge-android) or
-[ble-bridge-ios](https://github.com/ColdBoreBallistics/ble-bridge-ios)) and drives BLE operations
-interactively or from a test script.
+Desktop broker for the BT Bridge test harness. Receives Bluetooth events from a connected
+agent app ([bt-bridge-agent-android](https://github.com/ColdBoreBallistics/bt-bridge-agent-android) or
+[bt-bridge-agent-ios](https://github.com/ColdBoreBallistics/bt-bridge-agent-ios)) and drives
+Bluetooth operations interactively or from a test script.
 
 See [PROTOCOL.md](PROTOCOL.md) for the full wire protocol specification.
 
@@ -52,8 +52,8 @@ python3 --version
 No installation needed. Clone the repo and run directly:
 
 ```bash
-git clone https://github.com/ColdBoreBallistics/ble-bridge-server.git
-cd ble-bridge-server
+git clone https://github.com/ColdBoreBallistics/bt-bridge-broker.git
+cd bt-bridge-broker
 python3 ble_server.py
 ```
 
@@ -69,15 +69,15 @@ python3 ble_server.py
    ```
    On Windows: `ipconfig` — look for IPv4 Address under your LAN adapter.
 
-2. **Start the server:**
+2. **Start the broker:**
    ```bash
    python3 ble_server.py --port 9876
    ```
-   The server prints `Listening on 0.0.0.0:9876` and waits for a mobile connection.
+   The broker prints `Listening on 0.0.0.0:9876` and waits for an agent connection.
 
-3. **Connect the mobile app.**
-   Open ble-bridge-android (or ble-bridge-ios). Enter your machine's IP and port `9876`, then
-   tap **Connect to Server**. The server prints `Mobile client connected from …`.
+3. **Connect the agent app.**
+   Open bt-bridge-agent-android (or bt-bridge-agent-ios). Enter your machine's IP and port `9876`, then
+   tap **Connect to Server**. The broker prints `Mobile client connected from …`.
 
 4. **Type commands at the `ble>` prompt:**
 
@@ -105,7 +105,7 @@ python3 ble_server.py
    | `read <char-uuid>` | Read characteristic value |
    | `write <char-uuid> <hex>` | Write with response |
    | `writenr <char-uuid> <hex>` | Write without response |
-   | `ping` | Ping mobile app |
+   | `ping` | Ping agent app |
    | `quit` | Exit |
 
 ---
@@ -117,7 +117,7 @@ Import `BleServer` and `protocol` for automated test scenarios:
 ```python
 import asyncio
 import sys
-sys.path.insert(0, "/path/to/ble-bridge-server")
+sys.path.insert(0, "/path/to/bt-bridge-broker")
 
 from ble_server import BleServer
 import protocol as P
@@ -190,5 +190,5 @@ platform implementations.
 
 | Repo | Description |
 |---|---|
-| [ble-bridge-android](https://github.com/ColdBoreBallistics/ble-bridge-android) | Android BLE bridge app |
-| [ble-bridge-ios](https://github.com/ColdBoreBallistics/ble-bridge-ios) | iOS BLE bridge app |
+| [bt-bridge-agent-android](https://github.com/ColdBoreBallistics/bt-bridge-agent-android) | Android BT bridge agent app |
+| [bt-bridge-agent-ios](https://github.com/ColdBoreBallistics/bt-bridge-agent-ios) | iOS BT bridge agent app |

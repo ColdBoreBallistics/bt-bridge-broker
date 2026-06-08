@@ -1,32 +1,32 @@
-# BLE Bridge Protocol — v1.0
+# BT Bridge Protocol — v1.1
 
-This document is the **authoritative specification** for the BLE Bridge protocol.
+This document is the **authoritative specification** for the BT Bridge protocol.
 All platform implementations (Android, iOS, and any future ports) must conform to this spec.
-The canonical copy lives in the `ble-bridge-server` repository.
+The canonical copy lives in the `bt-bridge-broker` repository.
 
 ---
 
 ## Overview
 
-The BLE Bridge protocol connects a **mobile app** (the BLE side) to a **desktop server** (the test
-logic side) over a local TCP connection. The mobile app acts as a BLE Central — it scans,
-connects to, and exchanges data with BLE peripherals. The server drives the mobile app by sending
-commands, and the mobile app sends events back for every BLE state change.
+The BT Bridge protocol connects a **mobile app** (the Bluetooth side) to a **desktop broker** (the test
+logic side) over a local TCP connection. The mobile app acts as a BT Agent — it scans,
+connects to, and exchanges data with Bluetooth peripherals. The broker drives the agent by sending
+commands, and the agent sends events back for every Bluetooth state change.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Desktop (ble-bridge-server)                        │
+│  Desktop (bt-bridge-broker)                         │
 │  - runs test scripts                                │
 │  - logs all events                                  │
-│  - sends BLE commands to mobile                     │
+│  - sends BT commands to agent                       │
 └───────────────────┬─────────────────────────────────┘
                     │ TCP (port 9876)
                     │ newline-delimited JSON
-┌───────────────────┴─────────────────────────────────┐
-│  Mobile app (ble-bridge-android / ble-bridge-ios)   │
-│  - TCP client: connects to desktop server           │
-│  - BLE Central: scans, connects, reads, writes      │
-└───────────────────┬─────────────────────────────────┘
+┌───────────────────┴──────────────────────────────────┐
+│  Mobile app (bt-bridge-agent-android / -ios)         │
+│  - TCP client: connects to desktop broker            │
+│  - BT Central: scans, connects, reads, writes        │
+└───────────────────┬──────────────────────────────────┘
                     │ BLE
      ┌──────────────┴───────────────┐
      │  BLE Peripheral(s)           │
@@ -203,6 +203,33 @@ Response to a `ping` command.
 
 ---
 
+### `answer`
+Response to an `ask` command. Sent when the field operator taps Yes or No.
+
+```json
+{"event":"answer","req_id":"q1","value":true,"ts":1748982610000}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `req_id` | string | Echoed from the originating `ask` command |
+| `value` | boolean | `true` = Yes, `false` = No |
+
+---
+
+### `dismiss`
+Sent when the field operator dismisses a question card without answering.
+
+```json
+{"event":"dismiss","req_id":"q1","ts":1748982611000}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `req_id` | string | Echoed from the originating `ask` command |
+
+---
+
 ### `log`
 General-purpose log message from the mobile app for debugging.
 
@@ -334,6 +361,31 @@ The mobile app emits `pong`.
 
 ---
 
+### `ask`
+Push a Yes/No question to the field operator's screen. Used to drive hardware test plans — the server sends test steps as questions, the operator taps Yes/No, and the server logs the result.
+
+```json
+{"cmd":"ask","req_id":"q1","question":"Does the bearing match your reference compass?"}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `req_id` | string | Yes | Unique ID echoed in the `answer` or `dismiss` response |
+| `question` | string | Yes | Question text displayed on screen |
+
+The mobile app emits `answer` (Yes/No) or `dismiss` (no answer, card closed).
+
+---
+
+### `dismiss_all`
+Clear all pending question cards on the phone immediately.
+
+```json
+{"cmd":"dismiss_all"}
+```
+
+---
+
 ## Session Lifecycle
 
 A typical test session follows this sequence:
@@ -400,4 +452,4 @@ Read or subscribe. Value is a single byte, 0–100 (percent).
 ### Niimbot B1 / B21 Pro (ISSC UART-over-BLE bridge)
 
 UUIDs to be confirmed against hardware with nRF Connect.
-Expected to share the ISSC UART bridge service. See `ble-bridge-android` README for B1 confirmed UUIDs.
+Expected to share the ISSC UART bridge service. See `bt-bridge-agent-android` README for B1 confirmed UUIDs.
