@@ -337,7 +337,60 @@ python3 -m broker.main --agent-port 2653 --api-port 2673 --interactive --debug
 
 ---
 
-## 12. Migration Notes
+## 12. Template System Integration
+
+The broker rewrite includes the broker-side half of the template system. Full template
+system specification: `2026-06-08-template-system-design.md`.
+
+### Broker responsibilities in this implementation
+
+**Template registry (`broker/template_registry.py`):**
+- Startup scan of `templates/` directory — builds `Map<(id, version), TemplateObject>`
+- Semver-based dependency resolution; quarantines templates with unresolved `requires`
+- Duplicate `(id, version)` detection — fatal at startup
+- Reload on `POST /v1/templates/reload`
+
+**Template REST endpoints (added to `api/routes.py`):**
+- `GET /v1/templates` — list all templates
+- `GET /v1/templates/{id}` — list versions
+- `GET /v1/templates/{id}/{version}` — full template JSON
+- `POST /v1/templates/reload` — rescan disk
+- `POST /v1/templates/draft` — save template JSON to `templates/` directory
+- `DELETE /v1/templates/{id}/{version}` — delete from disk
+- `GET /v1/templates/match` — match a device signature against device templates
+
+**Template push to agent (added to `agent_tcp.py`):**
+- On agent connect: send `push_templates` manifest (all available template IDs + versions)
+- Handle `template_request` events: send `template_data` for each requested template
+- Handle `services_discovered` events: run signature match, send `apply_template` command
+- Handle `view_changed` events: forward to WebSocket subscribers
+
+**New REST endpoint:**
+- `POST /v1/agents/{id}/view` — set active display view on a connected agent
+
+**Module structure addition:**
+```
+broker/
+└── template_registry.py    — TemplateRegistry class
+```
+
+**`templates/` directory** added to repo root with initial builtin templates:
+```
+templates/
+├── weatherflow-tactical/
+│   ├── device.json
+│   └── display-v1.json
+├── niimbot-label-printer/
+│   ├── device.json
+│   └── display-v1.json
+└── shared/
+    ├── codec.niimbot-uart-framed.json
+    └── display.battery-service.json
+```
+
+---
+
+## 13. Migration Notes
 
 - `ble_server.py` is deleted; `protocol.py` is preserved unchanged
 - Port defaults change: Agent `9876 → 2653`, API is new on `2673`
