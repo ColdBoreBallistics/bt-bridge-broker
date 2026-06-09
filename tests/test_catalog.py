@@ -88,3 +88,62 @@ def test_install_detects_sha_mismatch(client, tmp_path, monkeypatch):
     monkeypatch.setattr(client, "fetch_index", tampered)
     with pytest.raises(CatalogError, match="checksum"):
         client.install(["builtin.example-display"], dest_dir=tmp_path / "t")
+
+
+def test_file_traversal_path_rejected(tmp_path):
+    # An index whose entry path escapes the catalog root must be refused (file:// containment).
+    # The base root is tmp_path (the dir that holds catalog/), so the secret must live
+    # ABOVE tmp_path and the path must climb past it to genuinely escape.
+    import hashlib, json as _json
+    root = tmp_path / "catalog"
+    (root / "builtin").mkdir(parents=True)
+    # a secret file OUTSIDE the base root (one level above tmp_path)
+    secret = tmp_path.parent / "secret_escape_target.json"
+    secret.write_text('{"stolen": true}')
+    sha = hashlib.sha256(secret.read_bytes()).hexdigest()
+    index = {
+        "index_format_version": 1, "count": 1,
+        "templates": [
+            {"id": "builtin.evil", "version": "1.0.0", "type": "device", "name": "Evil",
+             "namespace": "builtin", "path": "catalog/../../secret_escape_target.json",
+             "sha256": sha, "requires": {}},
+        ],
+    }
+    (root / "index.json").write_text(_json.dumps(index))
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    with pytest.raises(CatalogError, match="escapes base"):
+        c.install(["builtin.evil"], dest_dir=tmp_path / "dest")
+
+
+def test_malformed_index_missing_templates(tmp_path):
+    root = tmp_path / "catalog"
+    root.mkdir(parents=True)
+    (root / "index.json").write_text('{"index_format_version": 1}')  # no templates list
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    with pytest.raises(CatalogError, match="malformed"):
+        c.fetch_index()
+
+
+def test_malformed_index_bad_version(tmp_path):
+    import json as _json
+    root = tmp_path / "catalog"
+    root.mkdir(parents=True)
+    index = {"index_format_version": 1, "count": 1, "templates": [
+        {"id": "builtin.x", "version": "not-a-version", "type": "device", "name": "X",
+         "namespace": "builtin", "path": "catalog/x.json", "sha256": "0"*64, "requires": {}},
+    ]}
+    (root / "index.json").write_text(_json.dumps(index))
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    with pytest.raises(CatalogError, match="invalid version"):
+        c.fetch_index()
+
+
+def test_file_read_error_wrapped(tmp_path):
+    # Pointing the index path at a directory should raise CatalogError, not a raw OSError.
+    # (Covered indirectly; ensure a directory where a file is expected is handled.)
+    root = tmp_path / "catalog"
+    (root / "isadir").mkdir(parents=True)  # index.json will be a directory
+    (root / "index.json").mkdir()  # make index.json a directory → read_bytes raises IsADirectoryError
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    with pytest.raises(CatalogError):
+        c.fetch_index()

@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 from packaging.specifiers import SpecifierSet
-from packaging.version import Version
+from packaging.version import Version, InvalidVersion
 
 from broker.template_registry import _to_pep440
 
@@ -40,10 +40,17 @@ class CatalogClient:
         url = f"{self._base}/{rel_path.lstrip('/')}"
         parsed = urlparse(url)
         if parsed.scheme == "file":
-            p = pathlib.Path(parsed.path)
+            base_root = pathlib.Path(urlparse(self._base).path).resolve()
+            p = pathlib.Path(parsed.path).resolve()
+            # Containment: a malicious index path must not escape the catalog root.
+            if base_root != p and base_root not in p.parents:
+                raise CatalogError(f"catalog path escapes base: {parsed.path}")
             if not p.exists():
                 raise CatalogError(f"catalog file not found: {p}")
-            return p.read_bytes()
+            try:
+                return p.read_bytes()
+            except OSError as exc:
+                raise CatalogError(f"cannot read catalog file {p}: {exc}") from exc
         headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         try:
             resp = httpx.get(url, headers=headers, timeout=self._timeout,
@@ -62,9 +69,19 @@ class CatalogClient:
     def fetch_index(self) -> dict[str, Any]:
         raw = self._get_bytes("catalog/index.json")
         try:
-            return json.loads(raw)
+            index = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise CatalogError(f"catalog index is not valid JSON: {exc}") from exc
+        if not isinstance(index, dict) or not isinstance(index.get("templates"), list):
+            raise CatalogError("catalog index malformed: missing 'templates' list")
+        for e in index["templates"]:
+            if not isinstance(e, dict) or not e.get("id") or not e.get("version") or not e.get("path") or not e.get("sha256"):
+                raise CatalogError(f"catalog index entry malformed (needs id/version/path/sha256): {e!r}")
+            try:
+                Version(e["version"])
+            except InvalidVersion:
+                raise CatalogError(f"catalog index entry has invalid version: {e.get('id')!r} {e['version']!r}")
+        return index
 
     def _by_id(self, index: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         out: dict[str, list[dict[str, Any]]] = {}
@@ -108,7 +125,15 @@ class CatalogClient:
 
     def install(self, ids: list[str], dest_dir: pathlib.Path,
                 index: dict[str, Any] | None = None) -> list[pathlib.Path]:
-        """Download resolved templates into dest_dir, verifying each sha256."""
+        """Download resolved templates into dest_dir, verifying each sha256.
+
+        NOT atomic: if one template in the batch fails its checksum, earlier
+        templates in the batch are already written to disk. This is safe in
+        practice because the registry quarantines templates with unresolved
+        ``requires`` on load, so a partial dependency closure lands as
+        quarantined (not silently broken) rather than as a usable-but-incomplete
+        install.
+        """
         index = index or self.fetch_index()
         entries = self.resolve_selection(ids, index=index)
         dest_dir = pathlib.Path(dest_dir)
