@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+import re
 from typing import Any
 
 from packaging.version import Version
@@ -13,6 +14,12 @@ log = logging.getLogger(__name__)
 
 SUPPORTED_SCHEMA_VERSIONS: set[int] = {1}
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
+
+# Template ids and versions must be safe filesystem-path components — no separators,
+# no parent-dir escapes. Enforced at the registry boundary (save_draft) so a malicious
+# or buggy template cannot write outside templates/.
+_SAFE_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
+_SAFE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _to_pep440(spec_str: str) -> str:
@@ -286,13 +293,30 @@ class TemplateRegistry:
     # ------------------------------------------------------------------
 
     def save_draft(self, content: dict[str, Any]) -> pathlib.Path:
-        """Write a template JSON to disk in templates/<type-based-dir>/<id-local-part>.json."""
-        tid = content.get("id", "unknown")
-        namespace, _, local = tid.partition(".")
+        """Write a template JSON to disk under templates/.
+
+        The template id and version are validated as safe path components first — a
+        malicious id (e.g. containing '..' or '/') is rejected with ValueError rather
+        than allowed to escape the templates/ directory.
+        """
+        tid = content.get("id", "")
+        ver = content.get("version", "")
         ttype = content.get("type", "unknown")
-        target_dir = self._dir / f"{local}-{ttype}"
+        if not _SAFE_ID_RE.match(tid):
+            raise ValueError(f"unsafe or missing template id: {tid!r}")
+        if not _SAFE_VERSION_RE.match(ver):
+            raise ValueError(f"unsafe or missing template version: {ver!r}")
+        if not _SAFE_ID_RE.match(ttype):
+            raise ValueError(f"unsafe or missing template type: {ttype!r}")
+
+        namespace, _, local = tid.partition(".")
+        local = local or tid
+        target_dir = (self._dir / f"{local}-{ttype}").resolve()
+        # Defense in depth: the resolved target must stay within the templates dir.
+        base = self._dir.resolve()
+        if base not in target_dir.parents and target_dir != base:
+            raise ValueError(f"resolved draft path escapes templates dir: {target_dir}")
         target_dir.mkdir(parents=True, exist_ok=True)
-        ver = content.get("version", "0.0.0")
         filename = f"{local}-v{ver.replace('.', '_')}.json"
         path = target_dir / filename
         path.write_text(json.dumps(content, indent=2), encoding="utf-8")

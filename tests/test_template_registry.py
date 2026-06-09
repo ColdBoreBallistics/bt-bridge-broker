@@ -238,3 +238,61 @@ def test_malformed_requires_quarantines_not_crashes(tmpdir_path):
     tr = TemplateRegistry(templates_dir=tmpdir_path)
     tr.load()  # must NOT raise
     assert tr.is_quarantined("builtin.main", "1.0.0")
+
+
+def test_save_draft_rejects_path_traversal_id(tmpdir_path):
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    evil = {
+        "schema_version": 1,
+        "id": "../../../../tmp/pwned",
+        "version": "1.0.0",
+        "type": "display",
+        "name": "evil",
+    }
+    with pytest.raises(ValueError):
+        tr.save_draft(evil)
+    # Nothing was written outside the templates dir.
+    import pathlib as _pl
+    assert not _pl.Path("/tmp/pwned-display").exists()
+
+
+def test_save_draft_rejects_bad_version(tmpdir_path):
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    with pytest.raises(ValueError):
+        tr.save_draft({"schema_version": 1, "id": "contrib.ok", "version": "../evil", "type": "display", "name": "x"})
+
+
+def test_save_draft_writes_valid_draft(tmpdir_path):
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    path = tr.save_draft({
+        "schema_version": 1, "id": "contrib.my-draft", "version": "0.1.0",
+        "type": "display", "name": "My Draft", "notifications": [], "reads": [],
+    })
+    assert path.exists()
+    # The written file is inside the templates dir.
+    assert str(path).startswith(str(tmpdir_path))
+
+
+def test_match_device_variant_signature(tmpdir_path):
+    # Device template with variants; match should report the matching variant_id.
+    t = {
+        "schema_version": 1,
+        "id": "builtin.multi",
+        "version": "1.0.0",
+        "type": "device",
+        "name": "Multi",
+        "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"]},
+        "variants": [
+            {"variant_id": "v-a", "name": "A", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"], "name_prefix": "AA"}},
+            {"variant_id": "v-b", "name": "B", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"], "name_prefix": "BB"}},
+        ],
+    }
+    write_template(tmpdir_path, "multi.json", t)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    matches = tr.match_device(["0000abcd-0000-1000-8000-00805f9b34fb"], name_prefix="BB-thing")
+    assert len(matches) == 1
+    assert matches[0]["variant_id"] == "v-b"
