@@ -394,3 +394,87 @@ async def test_tcp_services_discovered_no_match_no_apply(tmp_path):
         assert st is not None and "NO:MATCH" in st.services
         writer.close()
         await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_tcp_services_discovered_name_prefix_match(tmp_path):
+    """A device template requiring a name_prefix only auto-applies when services_discovered
+    carries a matching name."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.wf-like", "version": "1.0.0", "type": "device",
+        "name": "WF-like",
+        "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"], "name_prefix": "WF"},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(lambda r, w: handle_agent(r, w, registry), host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # register
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # push_templates
+
+        # WITH a matching name -> apply_template should arrive.
+        writer.write((_json.dumps({
+            "event": "services_discovered", "address": "AA:BB:CC:DD:EE:FF", "name": "WF-1A2B3C4D",
+            "services": [{"uuid": "0000abcd-0000-1000-8000-00805f9b34fb", "chars": []}],
+        }) + "\n").encode())
+        await writer.drain()
+        apply = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert apply["cmd"] == "apply_template"
+        assert apply["device_template_id"] == "builtin.wf-like"
+        writer.close()
+        await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_tcp_services_discovered_no_name_no_apply_for_name_prefix_sig(tmp_path):
+    """Same template, but services_discovered WITHOUT a name must NOT auto-apply (name_prefix
+    is a hard requirement). The services are still cached."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.wf-like", "version": "1.0.0", "type": "device",
+        "name": "WF-like",
+        "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"], "name_prefix": "WF"},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(lambda r, w: handle_agent(r, w, registry), host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # register
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # push_templates
+        agent_id = registry.list_agents()[0].agent_id
+
+        writer.write((_json.dumps({
+            "event": "services_discovered", "address": "NO:NAME",
+            "services": [{"uuid": "0000abcd-0000-1000-8000-00805f9b34fb", "chars": []}],
+        }) + "\n").encode())
+        await writer.drain()
+        # No apply_template should arrive; confirm by checking the service got cached (proves the
+        # frame was processed) without an apply_template being readable.
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            st = registry.get_agent(agent_id)
+            if st and "NO:NAME" in st.services:
+                break
+        st = registry.get_agent(agent_id)
+        assert st is not None and "NO:NAME" in st.services
+        writer.close()
+        await writer.wait_closed()

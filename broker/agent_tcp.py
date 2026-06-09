@@ -110,7 +110,13 @@ async def handle_agent(
                 ]
                 address = event.get("address", "")
                 registry.set_services(agent_id, address, services)
-                matches = template_registry.match_device(service_uuids)
+                name = event.get("name")
+                manufacturer_data = event.get("manufacturer_data")
+                matches = template_registry.match_device(
+                    service_uuids,
+                    name_prefix=name if isinstance(name, str) and name else None,
+                    manufacturer_data=manufacturer_data if isinstance(manufacturer_data, str) and manufacturer_data else None,
+                )
                 if matches:
                     best = matches[0]
                     await conn.send(json.dumps({

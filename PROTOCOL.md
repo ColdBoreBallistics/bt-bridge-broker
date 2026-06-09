@@ -176,6 +176,17 @@ Emitted after service discovery completes on a connected device.
 
 **Characteristic property values:** `"read"`, `"write"`, `"write_no_response"`, `"notify"`, `"indicate"`.
 
+The agent SHOULD also include the device's advertised `name` (and `manufacturer_data` if available)
+on `services_discovered`, so the broker can match device-template signatures that require a name
+prefix or manufacturer data:
+
+```json
+{"event":"services_discovered","address":"AA:BB:CC:DD:EE:FF","name":"WF-1A2B3C4D","services":[ ... ],"ts":1748982603000}
+```
+
+Without `name`, signatures that declare a required `name_prefix` (e.g. WeatherFlow `WF`, Niimbot
+`B1`/`B21`) will not match and the broker will not auto-send `apply_template`.
+
 ---
 
 ### `notification`
@@ -631,7 +642,7 @@ the same protocol (in progress). Full opcode/packet detail is maintained interna
 | Version | Date | Status | Changes |
 |---|---|---|---|
 | 0.9.0 | 2026-06-09 | DRAFT | Updated for the two-tier broker rewrite: agent TCP port `9876 → 2653`; documented the separate REST + WebSocket client API on `2673`; added the `register` command and `agent_connected`/`agent_disconnected` lifecycle events; relabeled Mobile/Server → Agent/Broker; corrected WeatherFlow Tactical to confirmed vendor UUIDs and the confirmed LE frame (wind = raw/1024 **mph**, no wind-direction/DA); added confirmed Niimbot B1 ISSC UUIDs; corrected the version markers (header/body previously read 1.1 / 1.0). Template-system commands/events deferred to the next revision. |
-| 0.9.0 | 2026-06-09 | DRAFT | Added the **Template Protocol** section: Broker → Agent commands `push_templates`, `template_data`, `apply_template`, `set_view`; Agent → Broker events `template_request`, `template_applied`, `view_changed`. Documented signature-match → `apply_template` behavior and the quarantine rule. Additive only — version remains 0.9.x. |
+| 0.9.0 | 2026-06-09 | DRAFT | Added the **Template Protocol** section: Broker → Agent commands `push_templates`, `template_data`, `apply_template`, `set_view`; Agent → Broker events `template_request`, `template_applied`, `view_changed`. Documented signature-match → `apply_template` behavior and the quarantine rule. `services_discovered` now forwards the advertised `name` and `manufacturer_data` to the broker for signature matching (so `name_prefix`-required signatures auto-apply). Additive only — version remains 0.9.x. |
 
 > Version numbers are assigned only on Founder approval. This block is the sole authority on the
 > document's version and date. The protocol version stays at 0.9.x until the broker is released at
