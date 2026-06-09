@@ -7,11 +7,13 @@ from fastapi.responses import JSONResponse
 from broker.registry import AgentRegistry
 
 
-def create_app(registry: AgentRegistry) -> FastAPI:
+def create_app(registry: AgentRegistry | None = None) -> FastAPI:
     """Create and configure the FastAPI application.
 
     The registry is attached to app.state so all routes can access it via
-    request.app.state.registry without global state.
+    request.app.state.registry without global state. When launched via
+    broker.main, the registry is created and assigned by the lifespan instead;
+    tests pass one explicitly here.
     """
 
     app = FastAPI(
@@ -19,7 +21,8 @@ def create_app(registry: AgentRegistry) -> FastAPI:
         version="1.2.0",
         description="REST + WebSocket API for the BT Bridge hardware test harness.",
     )
-    app.state.registry = registry
+    if registry is not None:
+        app.state.registry = registry
 
     # Register routers
     from broker.api.routes import router as rest_router

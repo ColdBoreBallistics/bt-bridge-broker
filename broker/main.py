@@ -19,9 +19,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="BT_")
 
-    agent_host: str = "0.0.0.0"
+    # Default to loopback — the broker is unauthenticated. Pass 0.0.0.0 (or set
+    # BT_AGENT_HOST / BT_API_HOST) to expose it on the LAN for real device testing.
+    agent_host: str = "127.0.0.1"
     agent_port: int = 2653
-    api_host: str = "0.0.0.0"
+    api_host: str = "127.0.0.1"
     api_port: int = 2673
     interactive: bool = False
     log_file: str | None = None
@@ -83,11 +85,10 @@ async def lifespan(app: FastAPI):
 
 def create_app_with_lifespan() -> FastAPI:
     from broker.api.app import create_app
-    from broker.registry import AgentRegistry
 
-    # Registry is created in lifespan; app.py needs a placeholder to wire routers
-    placeholder = AgentRegistry()
-    app = create_app(placeholder)
+    # The registry is created and assigned to app.state by the lifespan (below),
+    # so the factory is called WITHOUT one — the lifespan is the sole owner.
+    app = create_app()
     app.router.lifespan_context = lifespan
     return app
 
