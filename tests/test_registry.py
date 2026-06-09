@@ -202,4 +202,9 @@ async def test_tcp_handle_agent_registers_and_publishes():
     assert "agent_connected" in event_types
     assert "pong" in event_types
     assert "agent_disconnected" in event_types
+    # Every envelope carries agent_id (added by publish) and lifecycle events carry ts.
+    assert all("agent_id" in e for e in events)
+    for e in events:
+        if e.get("event") in ("agent_connected", "agent_disconnected"):
+            assert "ts" in e
     registry.unsubscribe(token)

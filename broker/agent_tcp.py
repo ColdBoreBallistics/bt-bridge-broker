@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,7 +52,7 @@ async def handle_agent(
     await conn.send(json.dumps({"cmd": "register", "agent_id": agent_id}))
 
     # Notify WebSocket subscribers
-    registry.publish(agent_id, {"event": "agent_connected", "agent_id": agent_id, "peer": f"{peer[0]}:{peer[1]}"})
+    registry.publish(agent_id, {"event": "agent_connected", "peer": f"{peer[0]}:{peer[1]}", "ts": int(time.time() * 1000)})
 
     try:
         while True:
@@ -75,6 +76,6 @@ async def handle_agent(
         log.error("Unexpected error in agent loop for %s: %s", agent_id, exc)
     finally:
         registry.unregister(agent_id)
-        registry.publish(agent_id, {"event": "agent_disconnected", "agent_id": agent_id})
+        registry.publish(agent_id, {"event": "agent_disconnected", "ts": int(time.time() * 1000)})
         await conn.close()
         log.info("Agent disconnected: %s", agent_id)
