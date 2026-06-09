@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BT Bridge — Template Catalog</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
+    h1 { font-size: 1.4rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #ddd; }
+    .muted { color: #666; }
+    button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+    #status { margin-top: 1rem; }
+    code { font-family: ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>BT Bridge Template Catalog</h1>
+  <p class="muted">Select templates to install into this broker. Dependencies are pulled in automatically.</p>
+  <p><input id="filter" placeholder="Filter…" oninput="render()"></p>
+  <table>
+    <thead><tr><th></th><th>ID</th><th>Version</th><th>Type</th><th>Name</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p><button onclick="install()">Install selected</button></p>
+  <div id="status"></div>
+  <script>
+    let templates = [];
+    async function load() {
+      const r = await fetch('/v1/templates/catalog');
+      if (!r.ok) { status('Failed to load catalog: ' + r.status, true); return; }
+      templates = (await r.json()).templates || [];
+      render();
+    }
+    function render() {
+      const q = document.getElementById('filter').value.toLowerCase();
+      const rows = document.getElementById('rows');
+      rows.innerHTML = '';
+      for (const t of templates) {
+        const blob = (t.id + ' ' + (t.name||'') + ' ' + (t.description||'')).toLowerCase();
+        if (q && !blob.includes(q)) continue;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td><input type="checkbox" value="${t.id}"></td>
+          <td><code>${t.id}</code></td><td>${t.version}</td>
+          <td>${t.type||''}</td><td>${t.name||''}</td>`;
+        rows.appendChild(tr);
+      }
+    }
+    function status(msg, err) {
+      const d = document.getElementById('status');
+      d.textContent = msg; d.style.color = err ? '#b00' : '#070';
+    }
+    async function install() {
+      const ids = [...document.querySelectorAll('#rows input:checked')].map(c => c.value);
+      if (!ids.length) { status('Select at least one template.', true); return; }
+      status('Installing…');
+      const r = await fetch('/v1/templates/catalog/install', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ ids })
+      });
+      const body = await r.json();
+      if (!r.ok) { status('Install failed: ' + (body.message || r.status), true); return; }
+      status(`Installed ${body.installed} template(s): ${(body.files||[]).join(', ')}`);
+    }
+    load();
+  </script>
+</body>
+</html>

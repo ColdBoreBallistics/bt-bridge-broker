@@ -31,6 +31,12 @@ def create_app(registry: AgentRegistry | None = None) -> FastAPI:
     app.include_router(rest_router)
     app.include_router(ws_router)
 
+    import pathlib
+    from fastapi.staticfiles import StaticFiles
+    static_dir = pathlib.Path(__file__).parent.parent / "static"
+    if static_dir.exists():
+        app.mount("/templates-ui", StaticFiles(directory=str(static_dir), html=True), name="static")
+
     from fastapi import HTTPException
 
     # Explicit HTTPException handler — without this, Starlette's built-in handler
