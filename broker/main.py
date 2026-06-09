@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     log_file: str | None = None
     debug: bool = False
 
+    # Remote template catalog (bt-bridge-templates). None → CatalogClient's built-in
+    # default (GitHub raw, main). Set BT_CATALOG_BASE_URL to a file://<clone> path for
+    # offline use, and BT_CATALOG_TOKEN for the private repo over https.
+    catalog_base_url: str | None = None
+    catalog_token: str | None = None
+
 
 settings = Settings()
 
@@ -47,14 +53,22 @@ def _configure_logging() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import pathlib
+
     from broker.agent_tcp import handle_agent
+    from broker.catalog import CatalogClient, DEFAULT_BASE_URL
     from broker.registry import AgentRegistry
-    from broker.template_registry import TemplateRegistry
+    from broker.template_registry import TEMPLATES_DIR, TemplateRegistry
 
     registry = AgentRegistry()
     template_registry = TemplateRegistry()
     template_registry.load()
     registry.set_template_registry(template_registry)
+
+    catalog_client = CatalogClient(
+        base_url=settings.catalog_base_url or DEFAULT_BASE_URL,
+        token=settings.catalog_token,
+    )
 
     tcp_server = await asyncio.start_server(
         lambda r, w: handle_agent(r, w, registry),
@@ -72,6 +86,8 @@ async def lifespan(app: FastAPI):
 
     app.state.registry = registry
     app.state.template_registry = template_registry
+    app.state.catalog_client = catalog_client
+    app.state.templates_dir = TEMPLATES_DIR
 
     if settings.interactive:
         from broker.repl import run_repl
@@ -105,6 +121,8 @@ def main() -> None:
     parser.add_argument("--interactive", action="store_true", default=settings.interactive)
     parser.add_argument("--log", default=settings.log_file, dest="log_file")
     parser.add_argument("--debug", action="store_true", default=settings.debug)
+    parser.add_argument("--catalog-url", default=settings.catalog_base_url, dest="catalog_base_url",
+                        help="Template catalog base URL (default: GitHub raw; or file://<clone path>)")
     args = parser.parse_args()
 
     settings.agent_host = args.agent_host
@@ -114,6 +132,7 @@ def main() -> None:
     settings.interactive = args.interactive
     settings.log_file = args.log_file
     settings.debug = args.debug
+    settings.catalog_base_url = args.catalog_base_url
 
     _configure_logging()
 
