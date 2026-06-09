@@ -320,3 +320,109 @@ async def ask(
         timeout=60.0,
     )
     return {"answered": True, "value": result.get("value")}
+
+
+# ---------------------------------------------------------------------------
+# Template endpoints
+# ---------------------------------------------------------------------------
+
+def _template_registry(request: Request):
+    tr = getattr(request.app.state, "template_registry", None)
+    if tr is None:
+        raise HTTPException(status_code=503, detail={"error": "not_ready", "message": "Template registry not initialized"})
+    return tr
+
+
+@router.get("/v1/templates")
+async def list_templates(request: Request):
+    tr = _template_registry(request)
+    return [
+        {
+            "id": t["id"],
+            "version": t["version"],
+            "type": t.get("type"),
+            "name": t.get("name"),
+            "available": not tr.is_quarantined(t["id"], t["version"]),
+        }
+        for t in tr.list_all()
+    ]
+
+
+@router.get("/v1/templates/match")
+async def match_templates(
+    request: Request,
+    service_uuids: str = Query(default=""),
+    name_prefix: str | None = Query(default=None),
+    manufacturer_data: str | None = Query(default=None),
+):
+    tr = _template_registry(request)
+    uuids = [u.strip() for u in service_uuids.split(",") if u.strip()] if service_uuids else []
+    matches = tr.match_device(uuids, name_prefix=name_prefix, manufacturer_data=manufacturer_data)
+    return {"matches": matches}
+
+
+@router.get("/v1/templates/{template_id}")
+async def list_template_versions(template_id: str, request: Request):
+    tr = _template_registry(request)
+    versions = tr.list_versions(template_id)
+    if not versions:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"No template {template_id!r}"})
+    return {"id": template_id, "versions": versions}
+
+
+@router.get("/v1/templates/{template_id}/{version}")
+async def get_template(template_id: str, version: str, request: Request):
+    tr = _template_registry(request)
+    t = tr.get(template_id, version)
+    if t is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Template {template_id}@{version} not found"})
+    return t
+
+
+@router.post("/v1/templates/reload")
+async def reload_templates(request: Request):
+    tr = _template_registry(request)
+    tr.load()
+    return {"status": "ok", "loaded": len(tr.list_all())}
+
+
+@router.post("/v1/templates/draft", status_code=201)
+async def save_draft_template(body: dict, request: Request):
+    tr = _template_registry(request)
+    if not body.get("id") or not body.get("version"):
+        raise HTTPException(status_code=422, detail={"error": "invalid", "message": "Template must have id and version"})
+    try:
+        path = tr.save_draft(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid", "message": str(exc)})
+    return {"status": "saved", "path": str(path)}
+
+
+@router.delete("/v1/templates/{template_id}/{version}")
+async def delete_template(template_id: str, version: str, request: Request):
+    tr = _template_registry(request)
+    deleted = tr.delete(template_id, version)
+    if not deleted:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Template {template_id}@{version} not found"})
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Agent view endpoint
+# ---------------------------------------------------------------------------
+
+class SetViewIn(BaseModel):
+    address: str
+    view: str
+
+
+@router.post("/v1/agents/{agent_id}/view")
+async def set_agent_view(agent_id: str, body: SetViewIn, request: Request):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent_id)
+    await reg.send_command(state.agent_id, {
+        "cmd": "set_view",
+        "address": body.address,
+        "view": body.view,
+    })
+    return {"status": "ok"}
