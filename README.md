@@ -27,8 +27,8 @@ can drive Bluetooth operations and observe events.
 See [PROTOCOL.md](PROTOCOL.md) for the agent wire protocol and [docs/FOSS_GOVERNANCE.md](docs/FOSS_GOVERNANCE.md)
 for how the project is organized.
 
-> **Status:** pre-release (0.9.x). The broker is functional; the template system and the
-> remote template catalog are delivered by follow-on work (see the plans in `docs/`).
+> **Status:** pre-release (0.9.x). The broker, template system, and remote template catalog
+> are implemented; the Android agent runtime is the remaining piece.
 
 ---
 
@@ -178,8 +178,17 @@ Drive agents from a `bt[...]>` prompt: `agents`, `agent set <id>`, `scan start [
 The broker renders device data using **templates**, which are **not** bundled here — they live in
 the separate [bt-bridge-templates](https://github.com/ColdBoreBallistics/bt-bridge-templates)
 catalog and are fetched on demand. A fresh broker has an empty `templates/` directory and the
-agent falls back to a raw GATT view until templates are installed. (The full template system and
-the catalog-fetch tooling are delivered by follow-on plans in `docs/`.)
+agent falls back to a raw GATT view until templates are installed.
+
+Install templates from the catalog with the CLI:
+```bash
+python3 tools/fetch_templates.py list
+python3 tools/fetch_templates.py install builtin.weatherflow-tactical-device
+```
+or interactively via the web page at <http://127.0.0.1:2673/templates-ui/templates_select.html>
+while the broker is running. Templates are fetched into `templates/` and loaded automatically.
+Configure the catalog source with `--catalog-url` or the `BT_CATALOG_BASE_URL` env var (use
+`file://<path-to-clone>` for offline use); the private catalog over https needs `BT_CATALOG_TOKEN`.
 
 ---
 

@@ -3,4 +3,3 @@
 pytest>=8.2.0
 pytest-asyncio>=0.23.0
 httpx-ws>=0.6.0
-respx>=0.21.0

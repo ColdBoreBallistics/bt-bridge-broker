@@ -147,3 +147,64 @@ def test_file_read_error_wrapped(tmp_path):
     c = CatalogClient(base_url=f"file://{tmp_path}")
     with pytest.raises(CatalogError):
         c.fetch_index()
+
+
+def test_install_honors_dependency_version_constraint(tmp_path):
+    """A device requiring ^1.0.0 of a dep must install the 1.x dep, not a 2.0.0 also present."""
+    import hashlib, json
+    root = tmp_path / "catalog"
+    (root / "builtin").mkdir(parents=True)
+
+    def _w(name, obj):
+        p = root / "builtin" / name
+        p.write_text(json.dumps(obj))
+        return p, hashlib.sha256(p.read_bytes()).hexdigest()
+
+    dep1 = {"schema_version": 1, "id": "builtin.dep", "version": "1.5.0", "type": "display", "name": "Dep 1.5"}
+    dep2 = {"schema_version": 1, "id": "builtin.dep", "version": "2.0.0", "type": "display", "name": "Dep 2.0"}
+    dev = {"schema_version": 1, "id": "builtin.main", "version": "1.0.0", "type": "device", "name": "Main",
+           "requires": {"builtin.dep": "^1.0.0"}}
+    p1, s1 = _w("dep1.json", dep1)
+    p2, s2 = _w("dep2.json", dep2)
+    pd, sd = _w("dev.json", dev)
+    index = {"index_format_version": 1, "count": 3, "templates": [
+        {"id": "builtin.dep", "version": "1.5.0", "type": "display", "name": "Dep 1.5",
+         "namespace": "builtin", "path": "catalog/builtin/dep1.json", "sha256": s1, "requires": {}},
+        {"id": "builtin.dep", "version": "2.0.0", "type": "display", "name": "Dep 2.0",
+         "namespace": "builtin", "path": "catalog/builtin/dep2.json", "sha256": s2, "requires": {}},
+        {"id": "builtin.main", "version": "1.0.0", "type": "device", "name": "Main",
+         "namespace": "builtin", "path": "catalog/builtin/dev.json", "sha256": sd,
+         "requires": {"builtin.dep": "^1.0.0"}},
+    ]}
+    (root / "index.json").write_text(json.dumps(index))
+    from broker.catalog import CatalogClient
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    resolved = c.resolve_selection(["builtin.main"])
+    dep_entry = [e for e in resolved if e["id"] == "builtin.dep"][0]
+    assert dep_entry["version"] == "1.5.0"  # NOT 2.0.0
+
+
+def test_resolve_unsatisfiable_dep_version_raises(tmp_path):
+    import hashlib, json
+    root = tmp_path / "catalog"
+    (root / "builtin").mkdir(parents=True)
+    dep = {"schema_version": 1, "id": "builtin.dep", "version": "2.0.0", "type": "display", "name": "Dep"}
+    dev = {"schema_version": 1, "id": "builtin.main", "version": "1.0.0", "type": "device", "name": "Main",
+           "requires": {"builtin.dep": "^1.0.0"}}
+    (root / "builtin" / "dep.json").write_text(json.dumps(dep))
+    (root / "builtin" / "dev.json").write_text(json.dumps(dev))
+    sdep = hashlib.sha256((root/"builtin"/"dep.json").read_bytes()).hexdigest()
+    sdev = hashlib.sha256((root/"builtin"/"dev.json").read_bytes()).hexdigest()
+    index = {"index_format_version": 1, "count": 2, "templates": [
+        {"id": "builtin.dep", "version": "2.0.0", "type": "display", "name": "Dep",
+         "namespace": "builtin", "path": "catalog/builtin/dep.json", "sha256": sdep, "requires": {}},
+        {"id": "builtin.main", "version": "1.0.0", "type": "device", "name": "Main",
+         "namespace": "builtin", "path": "catalog/builtin/dev.json", "sha256": sdev,
+         "requires": {"builtin.dep": "^1.0.0"}},
+    ]}
+    (root / "index.json").write_text(json.dumps(index))
+    from broker.catalog import CatalogClient, CatalogResolveError
+    c = CatalogClient(base_url=f"file://{tmp_path}")
+    import pytest
+    with pytest.raises(CatalogResolveError):
+        c.resolve_selection(["builtin.main"])

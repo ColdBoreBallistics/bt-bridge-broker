@@ -106,25 +106,37 @@ class CatalogClient:
 
     def resolve_selection(self, ids: list[str],
                           index: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Resolve selected IDs plus their full `requires` closure to index entries."""
+        """Resolve selected IDs plus their full `requires` closure to index entries.
+
+        Each entry is resolved to the highest version satisfying its constraint: top-level
+        selections use the highest available version; dependencies use the highest version
+        satisfying the requiring template's semver spec. Raises CatalogResolveError for an
+        unknown id or a dependency whose spec cannot be satisfied.
+        """
         index = index or self.fetch_index()
         by_id = self._by_id(index)
         resolved: dict[str, dict[str, Any]] = {}
-        queue = list(ids)
+        # queue items are (id, spec_or_None); top-level selections have no spec.
+        queue: list[tuple[str, SpecifierSet | None]] = [(tid, None) for tid in ids]
         while queue:
-            tid = queue.pop()
+            tid, spec = queue.pop()
             if tid in resolved:
                 continue
             if tid not in by_id:
                 raise CatalogResolveError(f"template not in catalog: {tid!r}")
-            entry = self._highest(by_id[tid])
+            try:
+                entry = self._highest(by_id[tid], spec)
+            except CatalogError:
+                raise CatalogResolveError(
+                    f"no version of {tid!r} satisfies {spec}" if spec is not None
+                    else f"no version of {tid!r} available")
             resolved[tid] = entry
             for dep_id, spec_str in (entry.get("requires") or {}).items():
                 if dep_id not in by_id:
                     raise CatalogResolveError(
                         f"{tid} requires {dep_id} which is not in the catalog")
-                self._highest(by_id[dep_id], SpecifierSet(_to_pep440(spec_str), prereleases=True))
-                queue.append(dep_id)
+                dep_spec = SpecifierSet(_to_pep440(spec_str), prereleases=True)
+                queue.append((dep_id, dep_spec))
         return list(resolved.values())
 
     # ---- install --------------------------------------------------------
