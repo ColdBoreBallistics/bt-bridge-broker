@@ -22,13 +22,17 @@ async def ws_endpoint(
     await websocket.accept()
 
     registry: AgentRegistry = websocket.app.state.registry
-    event_filter: set[str] | None = {e.strip() for e in events.split(",")} if events else None
+    # Normalize: empty/whitespace agent or events query param means "no filter".
+    agent_filter = agent.strip() if agent and agent.strip() else None
+    event_filter: set[str] | None = (
+        {e.strip() for e in events.split(",") if e.strip()} if events and events.strip() else None
+    )
 
     queue, token = registry.subscribe()
 
     # Replay buffered events
     for envelope in registry.buffered_events():
-        if agent is not None and envelope.get("agent_id") != agent:
+        if agent_filter is not None and envelope.get("agent_id") != agent_filter:
             continue
         if event_filter and envelope.get("event") not in event_filter:
             continue
@@ -40,7 +44,7 @@ async def ws_endpoint(
 
     try:
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(_drain_queue(websocket, queue, agent, event_filter))
+            tg.create_task(_drain_queue(websocket, queue, agent_filter, event_filter))
             tg.create_task(_receive_commands(websocket, registry))
     except* (WebSocketDisconnect, asyncio.CancelledError):
         pass
@@ -66,10 +70,7 @@ async def _drain_queue(
 
 async def _receive_commands(ws: WebSocket, registry: AgentRegistry) -> None:
     while True:
-        try:
-            text = await ws.receive_text()
-        except WebSocketDisconnect:
-            raise
+        text = await ws.receive_text()
         try:
             msg = json.loads(text)
         except json.JSONDecodeError:
