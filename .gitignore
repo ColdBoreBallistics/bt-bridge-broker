@@ -1,9 +1,23 @@
+# Python
 __pycache__/
 *.py[cod]
-*.log
-.env
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.ruff_cache/
+
+# Virtualenv
 .venv/
 venv/
+
+# Logs / env
+*.log
+.env
+
+# Catalog-fetched templates are NOT committed to the broker repo — they are
+# downloaded on demand from the bt-bridge-templates catalog. Keep the directory
+# (via .gitkeep) but ignore its fetched contents.
+templates/*.json
+templates/**/*.json
+!templates/.gitkeep
