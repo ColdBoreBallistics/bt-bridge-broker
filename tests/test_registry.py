@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import pytest
 from broker.registry import AgentRegistry, AgentState
 from tests.helpers import MockAgentConnection
@@ -146,3 +147,59 @@ def test_publish_fan_out(registry, conn):
     envelope = q.get_nowait()
     assert envelope["agent_id"] == agent_id
     assert envelope["value"] == "ab"
+
+
+@pytest.mark.asyncio
+async def test_tcp_handle_agent_registers_and_publishes():
+    """Integration test over a real loopback socket.
+
+    Starts an actual asyncio TCP server bound to handle_agent, connects a real
+    client, sends one event line, then closes. This exercises the true
+    StreamReader/StreamWriter path — no mocked transports, so it is stable
+    across Python versions.
+    """
+    from broker.agent_tcp import handle_agent
+    registry = AgentRegistry()
+    q, token = registry.subscribe()
+
+    server = await asyncio.start_server(
+        lambda r, w: handle_agent(r, w, registry),
+        host="127.0.0.1",
+        port=0,  # OS-assigned free port
+    )
+    host, port = server.sockets[0].getsockname()[:2]
+
+    async with server:
+        # Connect a real client to the broker's agent TCP port.
+        reader, writer = await asyncio.open_connection(host, port)
+
+        # The broker sends a "register" command immediately on connect — read it.
+        register_line = await asyncio.wait_for(reader.readline(), timeout=1.0)
+        register_msg = json.loads(register_line)
+        assert register_msg["cmd"] == "register"
+        assert register_msg["agent_id"].startswith("agent-")
+
+        # Agent emits one event, then disconnects.
+        writer.write((json.dumps({"event": "pong", "ts": 1000}) + "\n").encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+        # Give the server task a moment to observe EOF and run its finally block.
+        for _ in range(50):
+            if registry.list_agents() == []:
+                break
+            await asyncio.sleep(0.01)
+
+    # After disconnect, the agent must be unregistered.
+    assert registry.list_agents() == []
+
+    # Published events must include agent_connected, the pong, and agent_disconnected.
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    event_types = [e.get("event") for e in events]
+    assert "agent_connected" in event_types
+    assert "pong" in event_types
+    assert "agent_disconnected" in event_types
+    registry.unsubscribe(token)
