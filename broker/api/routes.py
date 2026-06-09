@@ -457,6 +457,10 @@ class ReSampleIn(BaseModel):
     value_hex: str
 
 
+class ReAnalyseIn(BaseModel):
+    session_id: str
+
+
 @router.post("/v1/re/session/start", status_code=201)
 async def re_start(
     body: ReStartIn,
@@ -477,17 +481,19 @@ async def re_add_sample(body: ReSampleIn, request: Request):
     session = store.get(body.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {body.session_id!r} not found"})
-    session.add_sample(body.char_uuid, body.value_hex)
+    try:
+        session.add_sample(body.char_uuid, body.value_hex)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid", "message": str(exc)})
     return {"status": "ok", "sample_count": len(session.samples_for(body.char_uuid))}
 
 
 @router.post("/v1/re/session/analyse")
-async def re_analyse(body: dict, request: Request):
-    session_id = body.get("session_id")
+async def re_analyse(body: ReAnalyseIn, request: Request):
     store = _re_store(request)
-    session = store.get(session_id)
+    session = store.get(body.session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {session_id!r} not found"})
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {body.session_id!r} not found"})
     return session.analyse()
 
 

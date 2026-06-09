@@ -16,6 +16,20 @@ class ReSessionState(Enum):
     COMPLETE = "complete"
 
 
+def _normalize_hex(value_hex: str) -> str:
+    """Validate and normalize a hex string. Strips spaces, lowercases.
+    Raises ValueError on non-hex chars or odd length."""
+    if not isinstance(value_hex, str):
+        raise ValueError(f"value_hex must be a string, got {type(value_hex).__name__}")
+    cleaned = value_hex.replace(" ", "").lower()
+    # bytes.fromhex validates hex chars + even length; let its ValueError propagate (with our message).
+    try:
+        bytes.fromhex(cleaned)
+    except ValueError:
+        raise ValueError(f"invalid hex value: {value_hex!r}")
+    return cleaned
+
+
 @dataclass
 class ReSession:
     session_id: str
@@ -32,7 +46,7 @@ class ReSession:
         self.state = ReSessionState.COMPLETE
 
     def add_sample(self, char_uuid: str, value_hex: str) -> None:
-        self._samples.setdefault(char_uuid, []).append(value_hex)
+        self._samples.setdefault(char_uuid, []).append(_normalize_hex(value_hex))
 
     def samples_for(self, char_uuid: str) -> list[str]:
         return self._samples.get(char_uuid, [])
@@ -41,19 +55,14 @@ class ReSession:
         """Compute per-byte statistics for each captured characteristic."""
         result: dict[str, Any] = {}
         for char_uuid, samples in self._samples.items():
-            # Pad all samples to the same length
-            max_len = max((len(bytes.fromhex(s)) for s in samples), default=0)
-            byte_arrays = []
-            for s in samples:
-                b = bytes.fromhex(s)
-                # Pad with last byte if shorter (preserves statistical intent)
-                if len(b) < max_len:
-                    b = b + b[-1:] * (max_len - len(b)) if b else b"\x00" * max_len
-                byte_arrays.append(b)
+            byte_arrays = [bytes.fromhex(s) for s in samples]  # samples are pre-validated hex
+            max_len = max((len(b) for b in byte_arrays), default=0)
 
             byte_stats = []
             for i in range(max_len):
                 values = [arr[i] for arr in byte_arrays if i < len(arr)]
+                if not values:
+                    continue
                 counts = Counter(values)
                 total = len(values)
                 entropy = -sum((c / total) * math.log2(c / total) for c in counts.values() if c > 0)

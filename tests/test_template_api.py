@@ -258,3 +258,16 @@ async def test_re_session_full_flow(client, registry):
 async def test_re_session_sample_unknown_session_404(client):
     resp = await client.post("/v1/re/session/sample", json={"session_id": "nope", "char_uuid": "0000ff01-0000-1000-8000-00805f9b34fb", "value_hex": "01"})
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_re_session_sample_malformed_hex_422(client, registry):
+    from tests.helpers import MockAgentConnection
+    registry.register(MockAgentConnection())
+    resp = await client.post("/v1/re/session/start", json={"address": "AA:BB:CC:DD:EE:FF"})
+    sid = resp.json()["session_id"]
+    resp = await client.post("/v1/re/session/sample", json={"session_id": sid, "char_uuid": "0000ff01-0000-1000-8000-00805f9b34fb", "value_hex": "not-hex!"})
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body.get("error") == "invalid"
+    assert "internal_error" not in str(body)
