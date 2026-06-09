@@ -1,30 +1,41 @@
-# BT Bridge Protocol — v1.1
+# BT Bridge Protocol
 
-This document is the **authoritative specification** for the BT Bridge protocol.
-All platform implementations (Android, iOS, and any future ports) must conform to this spec.
-The canonical copy lives in the `bt-bridge-broker` repository.
+This document is the **authoritative specification** for the BT Bridge **agent wire protocol** —
+the newline-delimited JSON spoken between the broker and an agent app over TCP. All agent
+implementations (Android, iOS, and any future ports) must conform to it. The canonical copy lives
+in the `bt-bridge-broker` repository. The version is recorded in the revision-control block at the
+end of this document.
+
+> The REST + WebSocket API that test *clients* use to drive the broker is a separate surface,
+> documented by the broker's OpenAPI schema (`/docs`) and `README.md`. This file specifies only the
+> broker↔agent TCP protocol.
 
 ---
 
 ## Overview
 
-The BT Bridge protocol connects a **mobile app** (the Bluetooth side) to a **desktop broker** (the test
-logic side) over a local TCP connection. The mobile app acts as a BT Agent — it scans,
-connects to, and exchanges data with Bluetooth peripherals. The broker drives the agent by sending
-commands, and the agent sends events back for every Bluetooth state change.
+The BT Bridge harness is **two-tier**. An **agent app** (the Bluetooth side) connects to the
+**broker** over a local TCP connection and acts as a BT Agent — it scans, connects to, and
+exchanges data with Bluetooth peripherals. The broker drives the agent by sending commands, and the
+agent sends events back for every Bluetooth state change. Separately, the broker exposes a REST +
+WebSocket API on a second port so test clients (scripts, the interactive REPL, a browser) can issue
+those commands and observe the event stream.
 
 ```
+   Test clients (curl / scripts / browser / REPL)
+        │  REST + WebSocket  (broker API, default 127.0.0.1:2673)
+        ▼
 ┌─────────────────────────────────────────────────────┐
-│  Desktop (bt-bridge-broker)                         │
-│  - runs test scripts                                │
-│  - logs all events                                  │
-│  - sends BT commands to agent                       │
-└───────────────────┬─────────────────────────────────┘
-                    │ TCP (port 9876)
-                    │ newline-delimited JSON
+│  bt-bridge-broker                                    │
+│  - AgentRegistry: all connected-agent state          │
+│  - REST + WebSocket API for test clients             │
+│  - agent TCP server (this protocol)                  │
+└───────────────────┬──────────────────────────────────┘
+                    │ TCP (agent port, default 127.0.0.1:2653)
+                    │ newline-delimited JSON  ← THIS SPEC
 ┌───────────────────┴──────────────────────────────────┐
-│  Mobile app (bt-bridge-agent-android / -ios)         │
-│  - TCP client: connects to desktop broker            │
+│  Agent app (bt-bridge-agent-android / -ios)          │
+│  - TCP client: connects to the broker                │
 │  - BT Central: scans, connects, reads, writes        │
 └───────────────────┬──────────────────────────────────┘
                     │ BLE
@@ -42,16 +53,21 @@ commands, and the agent sends events back for every Bluetooth state change.
 | Property | Value |
 |---|---|
 | Protocol | TCP |
-| Default port | `9876` |
-| Direction | Mobile app initiates TCP connection to server |
+| Default agent port | `2653` |
+| Direction | Agent app initiates the TCP connection to the broker |
 | Framing | Newline-delimited JSON — one JSON object per line, terminated with `\n` |
 | Encoding | UTF-8 |
 | Byte arrays | Lowercase hex string, no `0x` prefix (e.g., `"1a2b3c"`) |
 | Timestamps | Unix epoch milliseconds, integer field `"ts"` |
 | UUIDs | Lowercase with hyphens, full 128-bit form (e.g., `"0000180f-0000-1000-8000-00805f9b34fb"`) |
 
-The server **listens** on `0.0.0.0:9876`. The mobile app **connects** to the server's IP and port.
-The server IP is entered by the user in the mobile app UI before connecting.
+The broker **listens** for agents on the agent port (default `127.0.0.1:2653`; bind `0.0.0.0` to
+accept agents over the LAN). The agent app **connects** to the broker's IP and agent port — the IP
+is entered by the user in the agent UI before connecting. The broker's REST + WebSocket API for
+test clients listens separately (default `127.0.0.1:2673`) and is out of scope for this document.
+
+On each new agent connection the broker assigns an `agent_id` (`agent-NNN`) and immediately sends a
+`register` command (see Commands) so the agent learns its id.
 
 ---
 
@@ -59,12 +75,40 @@ The server IP is entered by the user in the mobile app UI before connecting.
 
 Every message is a single JSON object on one line.
 
-**Mobile → Server messages** have a top-level `"event"` field.
-**Server → Mobile messages** have a top-level `"cmd"` field.
+**Agent → Broker messages** have a top-level `"event"` field.
+**Broker → Agent messages** have a top-level `"cmd"` field.
+
+The broker republishes agent events to its WebSocket subscribers, wrapping each in an envelope
+that adds the originating `"agent_id"`. Agents do not see that envelope; it is part of the
+broker↔client API, not this protocol.
 
 ---
 
-## Events (Mobile → Server)
+## Broker-originated lifecycle events
+
+The broker itself emits two lifecycle events into its event stream (they are not sent *by* the
+agent, but they describe the agent connection and appear alongside agent events on the broker's
+WebSocket fan-out):
+
+### `agent_connected`
+Emitted when an agent's TCP connection is accepted and registered.
+
+```json
+{"event":"agent_connected","peer":"127.0.0.1:54xxx","ts":1748982600000}
+```
+
+### `agent_disconnected`
+Emitted when an agent's TCP connection closes.
+
+```json
+{"event":"agent_disconnected","ts":1748982699000}
+```
+
+Both carry the originating `agent_id` in the broker's WebSocket envelope.
+
+---
+
+## Events (Agent → Broker)
 
 ### `scan_result`
 Emitted for each BLE advertisement received during a scan.
@@ -241,7 +285,21 @@ General-purpose log message from the mobile app for debugging.
 
 ---
 
-## Commands (Server → Mobile)
+## Commands (Broker → Agent)
+
+### `register`
+Sent by the broker immediately after the agent's TCP connection is accepted. Tells the agent the
+`agent_id` the broker assigned to it.
+
+```json
+{"cmd":"register","agent_id":"agent-001"}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `agent_id` | string | Broker-assigned id for this connection (`agent-NNN`) |
+
+---
 
 ### `scan_start`
 Begin BLE scanning.
@@ -391,37 +449,48 @@ Clear all pending question cards on the phone immediately.
 A typical test session follows this sequence:
 
 ```
-Server starts, listens on :9876
-Mobile app launches, user enters server IP, taps Connect
+Broker starts, listens for agents on :2653 (and its client API on :2673)
+Agent app launches, user enters broker IP + agent port, taps Connect
 TCP connection established
 
-Server  →  {"cmd":"scan_start","timeout_ms":15000,"name_filter":"WF-"}
-Mobile  →  {"event":"scan_result","address":"AA:BB:...","name":"WF-1A2B3C4D","rssi":-62,"ts":...}
-Mobile  →  {"event":"scan_result", ...}   (more results)
+Broker  →  {"cmd":"register","agent_id":"agent-001"}
+                                  (broker also emits agent_connected on its WS fan-out)
 
-Server  →  {"cmd":"scan_stop"}
-Server  →  {"cmd":"connect","address":"AA:BB:CC:DD:EE:FF"}
-Mobile  →  {"event":"connected","address":"AA:BB:CC:DD:EE:FF","ts":...}
+Broker  →  {"cmd":"scan_start","timeout_ms":15000,"name_filter":"WF-"}
+Agent   →  {"event":"scan_result","address":"AA:BB:...","name":"WF-1A2B3C4D","rssi":-62,"ts":...}
+Agent   →  {"event":"scan_result", ...}   (more results)
 
-Server  →  {"cmd":"discover","address":"AA:BB:CC:DD:EE:FF"}
-Mobile  →  {"event":"services_discovered","address":"AA:BB:CC:DD:EE:FF","services":[...],"ts":...}
+Broker  →  {"cmd":"scan_stop"}
+Broker  →  {"cmd":"connect","address":"AA:BB:CC:DD:EE:FF"}
+Agent   →  {"event":"connected","address":"AA:BB:CC:DD:EE:FF","ts":...}
 
-Server  →  {"cmd":"subscribe","address":"AA:BB:CC:DD:EE:FF","char":"961f0005-..."}
-Mobile  →  {"event":"notification","address":"...","char":"961f0005-...","value":"57465053...","ts":...}
-Mobile  →  {"event":"notification", ...}   (continuous stream)
+Broker  →  {"cmd":"discover","address":"AA:BB:CC:DD:EE:FF"}
+Agent   →  {"event":"services_discovered","address":"AA:BB:CC:DD:EE:FF","services":[...],"ts":...}
 
-Server  →  {"cmd":"disconnect","address":"AA:BB:CC:DD:EE:FF"}
-Mobile  →  {"event":"disconnected","address":"AA:BB:CC:DD:EE:FF","code":0,"ts":...}
+Broker  →  {"cmd":"subscribe","address":"AA:BB:CC:DD:EE:FF","char":"961f0005-..."}
+Agent   →  {"event":"notification","address":"...","char":"961f0005-...","value":"57465053...","ts":...}
+Agent   →  {"event":"notification", ...}   (continuous stream)
+
+Broker  →  {"cmd":"disconnect","address":"AA:BB:CC:DD:EE:FF"}
+Agent   →  {"event":"disconnected","address":"AA:BB:CC:DD:EE:FF","code":0,"ts":...}
+                                  (broker emits agent_disconnected when the TCP socket closes)
 ```
 
 ---
 
 ## Versioning
 
-The protocol version is `1.0`. Backwards-incompatible changes increment the major version.
-Additive changes (new optional fields, new event/command types) increment the minor version.
-Platform implementations should log an `"Unknown event/cmd"` warning for unrecognised message
+The protocol version tracks the broker's own version and is recorded in the revision-control block
+at the end of this document — it is **0.9.x** through the pre-release cycle and is assigned `1.0.0`
+only when the broker is tagged/released at `v1.0.0`. Backwards-incompatible changes increment the
+major version; additive changes (new optional fields, new event/command types) increment the minor
+version. Agent implementations should log an `"Unknown event/cmd"` warning for unrecognised message
 types rather than crashing, to maintain forward compatibility.
+
+> **Coming in a follow-on revision:** template-system commands and events
+> (`push_templates`, `template_data`, `apply_template`, `set_view`, `template_request`,
+> `template_applied`, `view_changed`). These are specified and added when the broker template
+> system lands; they are intentionally **not** in this revision.
 
 ---
 
@@ -433,12 +502,17 @@ These are provided as a convenience reference for test script authors.
 
 | Role | UUID |
 |---|---|
-| Primary service | `961f0001-0000-1000-8000-00805f9b34fb` |
-| Notify characteristic | `961f0005-0000-1000-8000-00805f9b34fb` |
+| Primary service | `961f0001-d2d6-43e3-a417-3bb8217e0e01` |
+| Notify characteristic | `961f0005-d2d6-43e3-a417-3bb8217e0e01` |
 
-Frame format (16 bytes): `WFPSM` header (5 bytes) + sensor payload (11 bytes).
-Subscribe to the notify characteristic; wind speed is encoded in bytes 5–6 (raw / 1024 = m/s).
-Full frame spec is in the internal Engine Documentation (OneDrive — confidential).
+> These are vendor-specific 128-bit UUIDs — **not** the Bluetooth-base `…-0000-1000-8000-00805f9b34fb`
+> form. A real device advertises the `-d2d6-…` UUIDs.
+
+Confirmed 16-byte little-endian notify frame (~1 Hz): wind speed `uint16_le` at offset 0
+(`raw / 1024 = mph`), temperature `int16_le` at offset 8 (`× 0.1 = °C`), humidity `uint8` at
+offset 10 (`%`), pressure `uint16_le` at offset 12 (`× 0.1 = hPa`). There is no wind-direction and
+no density-altitude field. Full frame spec is in the internal Engine Documentation (OneDrive —
+confidential).
 
 ### BLE Battery Service (standard)
 
@@ -451,5 +525,27 @@ Read or subscribe. Value is a single byte, 0–100 (percent).
 
 ### Niimbot B1 / B21 Pro (ISSC UART-over-BLE bridge)
 
-UUIDs to be confirmed against hardware with nRF Connect.
-Expected to share the ISSC UART bridge service. See `bt-bridge-agent-android` README for B1 confirmed UUIDs.
+Confirmed against B1 hardware:
+
+| Role | UUID |
+|---|---|
+| TX write characteristic (write-without-response) | `49535343-6daa-4d02-abf6-19569aca69fe` |
+| TX service | `49535343-fe7d-4ae5-8fa9-9fafd205e455` |
+| RX notify characteristic | `bef8d6c9-9c21-4c9e-b632-bd58c1009f9f` |
+| RX service | `e7810a71-73ae-499d-8c15-faa9aef0c3f2` |
+
+The RX notify characteristic is in a **different service** from the TX write characteristic — a
+common ISSC quirk. Frames use a `55 55 [cmd] [len] [data…] [xor] AA AA` wrapper. The B21 Pro shares
+the same protocol (in progress). Full opcode/packet detail is maintained internally.
+
+---
+
+## Revision Control
+
+| Version | Date | Status | Changes |
+|---|---|---|---|
+| 0.9.0 | 2026-06-09 | DRAFT | Updated for the two-tier broker rewrite: agent TCP port `9876 → 2653`; documented the separate REST + WebSocket client API on `2673`; added the `register` command and `agent_connected`/`agent_disconnected` lifecycle events; relabeled Mobile/Server → Agent/Broker; corrected WeatherFlow Tactical to confirmed vendor UUIDs and the confirmed LE frame (wind = raw/1024 **mph**, no wind-direction/DA); added confirmed Niimbot B1 ISSC UUIDs; corrected the version markers (header/body previously read 1.1 / 1.0). Template-system commands/events deferred to the next revision. |
+
+> Version numbers are assigned only on Founder approval. This block is the sole authority on the
+> document's version and date. The protocol version stays at 0.9.x until the broker is released at
+> `v1.0.0`.
