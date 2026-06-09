@@ -487,10 +487,96 @@ major version; additive changes (new optional fields, new event/command types) i
 version. Agent implementations should log an `"Unknown event/cmd"` warning for unrecognised message
 types rather than crashing, to maintain forward compatibility.
 
-> **Coming in a follow-on revision:** template-system commands and events
-> (`push_templates`, `template_data`, `apply_template`, `set_view`, `template_request`,
-> `template_applied`, `view_changed`). These are specified and added when the broker template
-> system lands; they are intentionally **not** in this revision.
+The template-system commands and events are specified in the **Template Protocol** section below.
+
+---
+
+## Template Protocol
+
+These commands and events let the broker push device/display templates to the agent and direct the
+agent to render a connected device with a matched template. They are additive — an agent that does
+not implement template handling simply ignores the new commands, and the broker tolerates their
+absence. (Broker-side behavior is in `broker/agent_tcp.py` + `broker/template_registry.py`; agent-side
+rendering is the agent app's responsibility.)
+
+### New Broker → Agent commands
+
+#### `push_templates`
+Sent immediately after `register`. Lists every template currently available on the broker so the
+agent can decide which (if any) it needs to request.
+
+```json
+{"cmd":"push_templates","manifest":[
+  {"id":"builtin.weatherflow-tactical-display","version":"1.0.0"},
+  {"id":"builtin.niimbot-label-printer-device","version":"1.0.0"}
+]}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `manifest` | array | `{id, version}` entries for all **available** (non-quarantined) templates |
+
+#### `template_data`
+Full template JSON, sent in response to a `template_request` event.
+
+```json
+{"cmd":"template_data","id":"builtin.weatherflow-tactical-display","version":"1.0.0","content":{ "...": "..." }}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `content` | object | The complete template document |
+
+#### `apply_template`
+Tells the agent to activate a specific device template (and variant) for a connected device. Sent by
+the broker after it signature-matches a `services_discovered` event.
+
+```json
+{"cmd":"apply_template","address":"AA:BB:CC:DD:EE:FF","device_template_id":"builtin.niimbot-label-printer-device","version":"1.0.0","variant_id":"b1"}
+```
+
+`variant_id` is `null` when the matched device template has no variants.
+
+#### `set_view`
+Changes the active display view for a connected device (e.g. `raw` → `imperial`).
+
+```json
+{"cmd":"set_view","address":"AA:BB:CC:DD:EE:FF","view":"imperial"}
+```
+
+### New Agent → Broker events
+
+#### `template_request`
+The agent asks for the full content of templates it doesn't already have cached (typically a subset
+of the `push_templates` manifest).
+
+```json
+{"event":"template_request","ids":[{"id":"builtin.weatherflow-tactical-display","version":"1.0.0"}],"ts":1748982600000}
+```
+
+The broker replies with one `template_data` command per resolvable entry; unknown ids are logged and
+skipped. Malformed `ids` (not a list, or non-object entries) are ignored without dropping the
+connection.
+
+#### `template_applied`
+The agent confirms it loaded and activated a template for a device.
+
+```json
+{"event":"template_applied","address":"AA:BB:CC:DD:EE:FF","device_template_id":"builtin.niimbot-label-printer-device","version":"1.0.0","variant_id":"b1","ts":1748982601000}
+```
+
+#### `view_changed`
+The user changed the active display view in the agent UI (the broker forwards this to its WebSocket
+subscribers).
+
+```json
+{"event":"view_changed","address":"AA:BB:CC:DD:EE:FF","view":"imperial","ts":1748982602000}
+```
+
+> **Signature matching:** the broker matches a device by the `service_uuids` from `services_discovered`
+> (all required UUIDs must be present), optionally refined by advertised `name_prefix` and
+> `manufacturer_data`. The highest-version, most-specific matching template wins. Templates with
+> unresolved `requires` dependencies are quarantined and never appear in `push_templates` or matches.
 
 ---
 
@@ -545,6 +631,7 @@ the same protocol (in progress). Full opcode/packet detail is maintained interna
 | Version | Date | Status | Changes |
 |---|---|---|---|
 | 0.9.0 | 2026-06-09 | DRAFT | Updated for the two-tier broker rewrite: agent TCP port `9876 → 2653`; documented the separate REST + WebSocket client API on `2673`; added the `register` command and `agent_connected`/`agent_disconnected` lifecycle events; relabeled Mobile/Server → Agent/Broker; corrected WeatherFlow Tactical to confirmed vendor UUIDs and the confirmed LE frame (wind = raw/1024 **mph**, no wind-direction/DA); added confirmed Niimbot B1 ISSC UUIDs; corrected the version markers (header/body previously read 1.1 / 1.0). Template-system commands/events deferred to the next revision. |
+| 0.9.0 | 2026-06-09 | DRAFT | Added the **Template Protocol** section: Broker → Agent commands `push_templates`, `template_data`, `apply_template`, `set_view`; Agent → Broker events `template_request`, `template_applied`, `view_changed`. Documented signature-match → `apply_template` behavior and the quarantine rule. Additive only — version remains 0.9.x. |
 
 > Version numbers are assigned only on Founder approval. This block is the sole authority on the
 > document's version and date. The protocol version stays at 0.9.x until the broker is released at
