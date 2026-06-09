@@ -51,6 +51,10 @@ async def test_get_agent_by_id(client, registry):
 async def test_get_agent_not_found(client):
     resp = await client.get("/v1/agents/agent-999")
     assert resp.status_code == 404
+    body = resp.json()
+    assert body.get("error") == "agent_not_found"
+    assert "message" in body
+    assert "detail" not in body  # must NOT be double-wrapped
 
 
 @pytest.mark.asyncio
@@ -108,3 +112,30 @@ async def test_multiple_agents_409(client, registry):
     registry.register(MockAgentConnection("c2"))
     resp = await client.post("/v1/scan/start", json={})
     assert resp.status_code == 409
+    body = resp.json()
+    assert body.get("error") == "agent_ambiguous"
+    assert "detail" not in body
+
+
+@pytest.mark.asyncio
+async def test_scan_start_explicit_agent_targets_that_agent(client, registry):
+    c1 = MockAgentConnection("c1")
+    c2 = MockAgentConnection("c2")
+    id1 = registry.register(c1)
+    id2 = registry.register(c2)
+    resp = await client.post(f"/v1/scan/start?agent={id2}", json={"timeout_ms": 3000})
+    assert resp.status_code == 202
+    # Only agent 2 should have received the command.
+    assert c2.last_command() is not None
+    assert c2.last_command()["cmd"] == "scan_start"
+    assert c1.last_command() is None
+
+
+@pytest.mark.asyncio
+async def test_scan_start_includes_name_filter(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post("/v1/scan/start", json={"timeout_ms": 4000, "name_filter": "Niimbot"})
+    assert resp.status_code == 202
+    cmd = conn.last_command()
+    assert cmd["name_filter"] == "Niimbot"
