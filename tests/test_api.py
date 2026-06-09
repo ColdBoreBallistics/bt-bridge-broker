@@ -215,3 +215,59 @@ async def test_read_timeout(client, registry):
         timeout=2.0,
     )
     assert resp.status_code == 504
+
+
+@pytest.mark.asyncio
+async def test_write_no_response_fire_and_forget(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post(
+        "/v1/write",
+        json={"address": "AA:BB:CC:DD:EE:FF", "char": "0000ff01-0000-1000-8000-00805f9b34fb", "value": "01ff", "rsp": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
+    cmd = conn.last_command()
+    assert cmd["cmd"] == "write"
+    assert cmd["value"] == "01ff"
+    assert cmd["rsp"] is False
+    assert "req_id" in cmd
+
+
+@pytest.mark.asyncio
+async def test_write_with_response_timeout(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    # rsp=True (default) waits for a write_result that never comes -> 504
+    resp = await client.post(
+        "/v1/write",
+        json={"address": "AA:BB:CC:DD:EE:FF", "char": "0000ff01-0000-1000-8000-00805f9b34fb", "value": "01ff"},
+    )
+    assert resp.status_code == 504
+    body = resp.json()
+    assert body.get("error") == "timeout"
+    assert "detail" not in body
+
+
+@pytest.mark.asyncio
+async def test_ask_dispatches_and_times_out(client, registry, monkeypatch):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    # /v1/ask uses a 60s server timeout; force a short timeout so the test is
+    # deterministic and fast. The command must still be dispatched to the agent.
+    orig_send_and_wait = registry.send_and_wait
+
+    async def _fast_send_and_wait(agent_id, cmd, req_id, timeout=5.0):
+        return await orig_send_and_wait(agent_id, cmd, req_id, timeout=0.2)
+
+    monkeypatch.setattr(registry, "send_and_wait", _fast_send_and_wait)
+
+    resp = await client.post("/v1/ask", json={"question": "Is the printer ready?"})
+    # No answer arrives, so the (shortened) wait times out.
+    assert resp.status_code == 504
+    assert resp.json().get("error") == "timeout"
+    # send_and_wait sends BEFORE awaiting, so the agent received the command.
+    cmd = conn.last_command()
+    assert cmd is not None
+    assert cmd["cmd"] == "ask"
+    assert cmd["question"] == "Is the printer ready?"

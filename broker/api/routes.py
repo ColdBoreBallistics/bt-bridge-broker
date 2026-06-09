@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from broker.registry import AgentRegistry, ScanResultEntry
@@ -186,7 +187,6 @@ async def get_services(
     address: str = Query(...),
     agent: str | None = Query(default=None),
 ):
-    from fastapi import HTTPException
     reg = _registry(request)
     state = reg.resolve_agent(agent)
     services = state.services.get(address)
@@ -201,6 +201,8 @@ async def get_services(
 # ---------------------------------------------------------------------------
 # Characteristic endpoints
 # ---------------------------------------------------------------------------
+# NOTE: subscribe/unsubscribe return 200 (effect is immediate) while connect/
+# disconnect/discover return 202 (longer async device operation, merely accepted).
 
 class CharOpIn(BaseModel):
     address: str
@@ -289,13 +291,12 @@ async def ping(
     request: Request,
     agent: str | None = Query(default=None),
 ):
-    import time as _time
     reg = _registry(request)
     state = reg.resolve_agent(agent)
     req_id = uuid.uuid4().hex[:8]
-    t0 = _time.monotonic()
-    result = await reg.send_and_wait(state.agent_id, {"cmd": "ping"}, req_id, timeout=5.0)
-    latency_ms = int((_time.monotonic() - t0) * 1000)
+    t0 = time.monotonic()
+    await reg.send_and_wait(state.agent_id, {"cmd": "ping"}, req_id, timeout=5.0)
+    latency_ms = int((time.monotonic() - t0) * 1000)
     return {"latency_ms": latency_ms}
 
 
