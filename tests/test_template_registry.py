@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import pathlib
 import pytest
-import tempfile
 
 from broker.template_registry import TemplateRegistry, SUPPORTED_SCHEMA_VERSIONS
 
@@ -180,3 +179,62 @@ def test_manifest_excludes_quarantined(tmpdir_path):
     ids = [m["id"] for m in manifest]
     assert "builtin.good" in ids
     assert "builtin.bad" not in ids
+
+
+def test_caret_requires_resolves_when_satisfied(tmpdir_path):
+    # A device that requires ^1.0.0 of a display that IS installed at 1.2.0 must NOT be quarantined.
+    dep = make_display_template("builtin.dep", "1.2.0")
+    main = make_device_template("builtin.main", "1.0.0")
+    main["requires"] = {"builtin.dep": "^1.0.0"}
+    write_template(tmpdir_path, "dep.json", dep)
+    write_template(tmpdir_path, "main.json", main)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()  # must NOT raise InvalidSpecifier
+    assert not tr.is_quarantined("builtin.main", "1.0.0")
+    ids = [m["id"] for m in tr.manifest()]
+    assert "builtin.main" in ids
+
+
+def test_caret_requires_quarantines_when_out_of_range(tmpdir_path):
+    # require ^1.0.0 but only 2.0.0 installed -> out of range -> quarantined.
+    dep = make_display_template("builtin.dep", "2.0.0")
+    main = make_device_template("builtin.main", "1.0.0")
+    main["requires"] = {"builtin.dep": "^1.0.0"}
+    write_template(tmpdir_path, "dep.json", dep)
+    write_template(tmpdir_path, "main.json", main)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    assert tr.is_quarantined("builtin.main", "1.0.0")
+
+
+def test_tilde_requires_resolves_within_minor(tmpdir_path):
+    dep = make_display_template("builtin.dep", "1.2.5")
+    main = make_device_template("builtin.main", "1.0.0")
+    main["requires"] = {"builtin.dep": "~1.2.0"}
+    write_template(tmpdir_path, "dep.json", dep)
+    write_template(tmpdir_path, "main.json", main)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    assert not tr.is_quarantined("builtin.main", "1.0.0")
+
+
+def test_pep440_requires_still_works(tmpdir_path):
+    dep = make_display_template("builtin.dep", "1.5.0")
+    main = make_device_template("builtin.main", "1.0.0")
+    main["requires"] = {"builtin.dep": ">=1.0.0,<2.0.0"}
+    write_template(tmpdir_path, "dep.json", dep)
+    write_template(tmpdir_path, "main.json", main)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()
+    assert not tr.is_quarantined("builtin.main", "1.0.0")
+
+
+def test_malformed_requires_quarantines_not_crashes(tmpdir_path):
+    dep = make_display_template("builtin.dep", "1.0.0")
+    main = make_device_template("builtin.main", "1.0.0")
+    main["requires"] = {"builtin.dep": "not-a-version-spec!!!"}
+    write_template(tmpdir_path, "dep.json", dep)
+    write_template(tmpdir_path, "main.json", main)
+    tr = TemplateRegistry(templates_dir=tmpdir_path)
+    tr.load()  # must NOT raise
+    assert tr.is_quarantined("builtin.main", "1.0.0")

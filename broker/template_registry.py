@@ -7,12 +7,41 @@ import pathlib
 from typing import Any
 
 from packaging.version import Version
-from packaging.specifiers import SpecifierSet
+from packaging.specifiers import SpecifierSet, InvalidSpecifier
 
 log = logging.getLogger(__name__)
 
 SUPPORTED_SCHEMA_VERSIONS: set[int] = {1}
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
+
+
+def _to_pep440(spec_str: str) -> str:
+    """Translate npm/Cargo-style caret (^) and tilde (~) ranges to PEP 440.
+
+    ^X.Y.Z  -> >=X.Y.Z,<(X+1).0.0   (compatible within the same major)
+    ~X.Y.Z  -> >=X.Y.Z,<X.(Y+1).0   (compatible within the same minor)
+    Anything else is assumed to already be a PEP 440 specifier and returned as-is.
+    """
+    s = spec_str.strip()
+    if s[:1] in ("^", "~"):
+        op = s[0]
+        base = s[1:].strip()
+        parts = base.split(".")
+        # Normalize to 3 numeric components (pad missing with 0).
+        nums = []
+        for i in range(3):
+            try:
+                nums.append(int(parts[i]) if i < len(parts) else 0)
+            except ValueError:
+                # Non-numeric component — can't translate; let caller handle as PEP 440.
+                return spec_str
+        major, minor, patch = nums
+        if op == "^":
+            upper = f"{major + 1}.0.0"
+        else:  # "~"
+            upper = f"{major}.{minor + 1}.0"
+        return f">={major}.{minor}.{patch},<{upper}"
+    return spec_str
 
 
 class TemplateRegistry:
@@ -101,11 +130,19 @@ class TemplateRegistry:
         )
 
     def _resolve_dep(self, dep_id: str, spec_str: str) -> str | None:
-        """Return highest installed version of dep_id satisfying spec_str, or None."""
+        """Return highest installed version of dep_id satisfying spec_str, or None.
+
+        Accepts PEP 440 specifiers and npm/Cargo-style ^/~ ranges. A spec that cannot
+        be parsed yields None (the requiring template is quarantined) rather than raising.
+        """
         versions = self.list_versions(dep_id)
         if not versions:
             return None
-        spec = SpecifierSet(spec_str, prereleases=True)
+        try:
+            spec = SpecifierSet(_to_pep440(spec_str), prereleases=True)
+        except InvalidSpecifier:
+            log.error("Invalid requires specifier %r for %s — cannot resolve", spec_str, dep_id)
+            return None
         candidates = [v for v in versions if Version(v) in spec]
         if not candidates:
             return None
