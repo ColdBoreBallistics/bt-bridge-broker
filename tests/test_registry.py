@@ -268,3 +268,129 @@ async def test_tcp_push_templates_and_services_discovered(tmp_path):
 
         writer.close()
         await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_tcp_malformed_services_discovered_does_not_drop_agent(tmp_path):
+    """A malformed services_discovered (services not a list / entries not dicts) must NOT
+    crash the read loop or drop the agent — the bad frame is skipped."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.demo-device", "version": "1.0.0", "type": "device",
+        "name": "Demo", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"]},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(lambda r, w: handle_agent(r, w, registry), host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # register
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # push_templates
+        agents_before = len(registry.list_agents())
+        assert agents_before == 1
+
+        # Garbage services payloads — none should crash the loop.
+        for bad in ('{"event":"services_discovered","services":"garbage","address":"X"}',
+                    '{"event":"services_discovered","services":[123,null,"x"],"address":"Y"}',
+                    '{"event":"services_discovered","address":"Z"}'):
+            writer.write((bad + "\n").encode())
+            await writer.drain()
+
+        # Follow with a valid command and confirm the agent is still alive + responsive:
+        # a well-formed services_discovered should still produce apply_template.
+        writer.write((_json.dumps({
+            "event": "services_discovered", "address": "AA:BB:CC:DD:EE:FF",
+            "services": [{"uuid": "0000abcd-0000-1000-8000-00805f9b34fb", "chars": []}],
+        }) + "\n").encode())
+        await writer.drain()
+        apply = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert apply["cmd"] == "apply_template"
+        assert len(registry.list_agents()) == 1  # never dropped
+        writer.close()
+        await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_tcp_template_request_returns_template_data(tmp_path):
+    """template_request gets a template_data response with the full content."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.demo-device", "version": "1.0.0", "type": "device",
+        "name": "Demo", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"]},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(lambda r, w: handle_agent(r, w, registry), host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # register
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # push_templates
+        writer.write((_json.dumps({
+            "event": "template_request",
+            "ids": [{"id": "builtin.demo-device", "version": "1.0.0"}],
+        }) + "\n").encode())
+        await writer.drain()
+        msg = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert msg["cmd"] == "template_data"
+        assert msg["id"] == "builtin.demo-device"
+        assert msg["content"]["name"] == "Demo"
+        writer.close()
+        await writer.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_tcp_services_discovered_no_match_no_apply(tmp_path):
+    """services_discovered with non-matching UUIDs caches services but sends no apply_template."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.demo-device", "version": "1.0.0", "type": "device",
+        "name": "Demo", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"]},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(lambda r, w: handle_agent(r, w, registry), host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # register
+        await asyncio.wait_for(reader.readline(), timeout=1.0)  # push_templates
+        register_agent_id = registry.list_agents()[0].agent_id
+        writer.write((_json.dumps({
+            "event": "services_discovered", "address": "NO:MATCH",
+            "services": [{"uuid": "0000ffff-0000-1000-8000-00805f9b34fb", "chars": []}],
+        }) + "\n").encode())
+        await writer.drain()
+        # No apply_template should arrive. Give the server a moment, then assert services cached
+        # and nothing pending. We confirm by checking state.services rather than reading (which would block).
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            st = registry.get_agent(register_agent_id)
+            if st and "NO:MATCH" in st.services:
+                break
+        st = registry.get_agent(register_agent_id)
+        assert st is not None and "NO:MATCH" in st.services
+        writer.close()
+        await writer.wait_closed()

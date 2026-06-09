@@ -105,6 +105,12 @@ class AgentRegistry:
                 fut.set_result(event)
                 self._waiters.pop(waiter_key, None)
 
+    def set_services(self, agent_id: str, address: str, services: list[Any]) -> None:
+        """Cache the discovered GATT services for a device under the given agent."""
+        state = self._agents.get(agent_id)
+        if state is not None and address:
+            state.services[address] = services
+
     def _upsert_scan_result(self, state: AgentState, event: dict[str, Any]) -> None:
         now = _now_ms()
         address = event.get("address", "")

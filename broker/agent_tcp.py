@@ -83,7 +83,12 @@ async def handle_agent(
 
             # template_request — respond with template_data for each requested id+version.
             if etype == "template_request" and template_registry is not None:
-                for item in event.get("ids", []):
+                ids = event.get("ids")
+                if not isinstance(ids, list):
+                    ids = []
+                for item in ids:
+                    if not isinstance(item, dict):
+                        continue
                     tid = item.get("id")
                     ver = item.get("version")
                     content = template_registry.get(tid, ver) if tid and ver else None
@@ -97,12 +102,14 @@ async def handle_agent(
 
             # services_discovered — cache services + run signature match → apply_template.
             if etype == "services_discovered" and template_registry is not None:
-                services = event.get("services", [])
-                service_uuids = [s.get("uuid") for s in services if s.get("uuid")]
+                raw_services = event.get("services")
+                services = raw_services if isinstance(raw_services, list) else []
+                service_uuids = [
+                    s.get("uuid") for s in services
+                    if isinstance(s, dict) and s.get("uuid")
+                ]
                 address = event.get("address", "")
-                state = registry.get_agent(agent_id)
-                if state is not None:
-                    state.services[address] = services
+                registry.set_services(agent_id, address, services)
                 matches = template_registry.match_device(service_uuids)
                 if matches:
                     best = matches[0]
@@ -118,7 +125,7 @@ async def handle_agent(
                              best["variant_id"], best["confidence"])
                 else:
                     log.info("No template match for %s — agent uses raw GATT", address)
-                # fall through: services_discovered IS still published + update_state'd
+                # services_discovered still falls through to update_state + publish below.
 
             registry.update_state(agent_id, event)
             registry.publish(agent_id, event)
