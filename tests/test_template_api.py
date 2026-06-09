@@ -172,6 +172,21 @@ def test_match_route_declared_before_template_id():
     )
 
 
+def test_catalog_routes_declared_before_template_id():
+    """Static guard: /v1/templates/catalog(/install) must precede /v1/templates/{template_id}."""
+    from broker.api.routes import router
+
+    def _index(path_suffix: str) -> int:
+        for i, route in enumerate(router.routes):
+            if getattr(route, "path", "") == f"/v1/templates/{path_suffix}":
+                return i
+        raise AssertionError(f"route /v1/templates/{path_suffix} not found")
+
+    tid_idx = _index("{template_id}")
+    assert _index("catalog") < tid_idx
+    assert _index("catalog/install") < tid_idx
+
+
 @pytest.mark.asyncio
 async def test_draft_non_string_version_returns_422_not_500(client):
     # A non-string version must yield 422 (validated), never a 500 leaking a TypeError.

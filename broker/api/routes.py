@@ -333,6 +333,21 @@ def _template_registry(request: Request):
     return tr
 
 
+def _catalog_client(request: Request):
+    cc = getattr(request.app.state, "catalog_client", None)
+    if cc is None:
+        from broker.catalog import CatalogClient
+        request.app.state.catalog_client = CatalogClient()
+        cc = request.app.state.catalog_client
+    return cc
+
+
+def _templates_dir(request: Request):
+    import pathlib
+    d = getattr(request.app.state, "templates_dir", None)
+    return pathlib.Path(d) if d else pathlib.Path("templates")
+
+
 @router.get("/v1/templates")
 async def list_templates(request: Request):
     tr = _template_registry(request)
@@ -359,6 +374,40 @@ async def match_templates(
     uuids = [u.strip() for u in service_uuids.split(",") if u.strip()] if service_uuids else []
     matches = tr.match_device(uuids, name_prefix=name_prefix, manufacturer_data=manufacturer_data)
     return {"matches": matches}
+
+
+class CatalogInstallIn(BaseModel):
+    ids: list[str]
+
+
+@router.get("/v1/templates/catalog")
+async def catalog_list(request: Request):
+    from fastapi.concurrency import run_in_threadpool
+    from broker.catalog import CatalogError
+    cc = _catalog_client(request)
+    try:
+        # fetch_index uses blocking httpx — run it off the event loop.
+        return await run_in_threadpool(cc.fetch_index)
+    except CatalogError as exc:
+        raise HTTPException(status_code=502, detail={"error": "catalog_error", "message": str(exc)})
+
+
+@router.post("/v1/templates/catalog/install")
+async def catalog_install(body: CatalogInstallIn, request: Request):
+    from fastapi.concurrency import run_in_threadpool
+    from broker.catalog import CatalogError
+    cc = _catalog_client(request)
+    dest = _templates_dir(request)
+    try:
+        # install downloads + writes via blocking httpx/IO — run it off the event loop.
+        written = await run_in_threadpool(cc.install, body.ids, dest)
+    except CatalogError as exc:
+        raise HTTPException(status_code=502, detail={"error": "catalog_error", "message": str(exc)})
+    # Reload the registry so newly installed templates take effect immediately.
+    tr = getattr(request.app.state, "template_registry", None)
+    if tr is not None:
+        tr.load()
+    return {"installed": len(written), "files": [getattr(p, "name", str(p)) for p in written]}
 
 
 @router.get("/v1/templates/{template_id}")
