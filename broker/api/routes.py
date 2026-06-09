@@ -343,9 +343,12 @@ def _catalog_client(request: Request):
 
 
 def _templates_dir(request: Request):
-    import pathlib
     d = getattr(request.app.state, "templates_dir", None)
-    return pathlib.Path(d) if d else pathlib.Path("templates")
+    if d is not None:
+        import pathlib
+        return pathlib.Path(d)
+    from broker.template_registry import TEMPLATES_DIR
+    return TEMPLATES_DIR
 
 
 @router.get("/v1/templates")
@@ -395,12 +398,14 @@ async def catalog_list(request: Request):
 @router.post("/v1/templates/catalog/install")
 async def catalog_install(body: CatalogInstallIn, request: Request):
     from fastapi.concurrency import run_in_threadpool
-    from broker.catalog import CatalogError
+    from broker.catalog import CatalogError, CatalogResolveError
     cc = _catalog_client(request)
     dest = _templates_dir(request)
     try:
         # install downloads + writes via blocking httpx/IO — run it off the event loop.
         written = await run_in_threadpool(cc.install, body.ids, dest)
+    except CatalogResolveError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_selection", "message": str(exc)})
     except CatalogError as exc:
         raise HTTPException(status_code=502, detail={"error": "catalog_error", "message": str(exc)})
     # Reload the registry so newly installed templates take effect immediately.

@@ -24,6 +24,12 @@ class CatalogError(RuntimeError):
     """Raised on any catalog fetch / resolve / verify failure."""
 
 
+class CatalogResolveError(CatalogError):
+    """Raised when a requested template id (or its dependency) cannot be resolved
+    against the catalog — a client-input fault (bad/unknown id), distinct from an
+    upstream fetch/transport failure."""
+
+
 DEFAULT_BASE_URL = "https://raw.githubusercontent.com/ColdBoreBallistics/bt-bridge-templates/main"
 
 
@@ -110,12 +116,12 @@ class CatalogClient:
             if tid in resolved:
                 continue
             if tid not in by_id:
-                raise CatalogError(f"template not in catalog: {tid!r}")
+                raise CatalogResolveError(f"template not in catalog: {tid!r}")
             entry = self._highest(by_id[tid])
             resolved[tid] = entry
             for dep_id, spec_str in (entry.get("requires") or {}).items():
                 if dep_id not in by_id:
-                    raise CatalogError(
+                    raise CatalogResolveError(
                         f"{tid} requires {dep_id} which is not in the catalog")
                 self._highest(by_id[dep_id], SpecifierSet(_to_pep440(spec_str), prereleases=True))
                 queue.append(dep_id)
