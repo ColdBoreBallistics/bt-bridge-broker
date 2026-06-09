@@ -134,3 +134,188 @@ async def scan_results(
         )
         for r in results
     ]
+
+
+# ---------------------------------------------------------------------------
+# Device endpoints
+# ---------------------------------------------------------------------------
+
+class AddressIn(BaseModel):
+    address: str
+
+
+@router.post("/v1/connect", status_code=202)
+async def connect_device(
+    body: AddressIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    await reg.send_command(state.agent_id, {"cmd": "connect", "address": body.address})
+    return {"status": "accepted"}
+
+
+@router.post("/v1/disconnect", status_code=202)
+async def disconnect_device(
+    body: AddressIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    await reg.send_command(state.agent_id, {"cmd": "disconnect", "address": body.address})
+    return {"status": "accepted"}
+
+
+@router.post("/v1/discover", status_code=202)
+async def discover_services(
+    body: AddressIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    await reg.send_command(state.agent_id, {"cmd": "discover", "address": body.address})
+    return {"status": "accepted"}
+
+
+@router.get("/v1/services")
+async def get_services(
+    request: Request,
+    address: str = Query(...),
+    agent: str | None = Query(default=None),
+):
+    from fastapi import HTTPException
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    services = state.services.get(address)
+    if services is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "not_discovered", "message": f"No services discovered for {address!r}"},
+        )
+    return services
+
+
+# ---------------------------------------------------------------------------
+# Characteristic endpoints
+# ---------------------------------------------------------------------------
+
+class CharOpIn(BaseModel):
+    address: str
+    char: str
+
+
+class WriteIn(BaseModel):
+    address: str
+    char: str
+    value: str  # lowercase hex
+    rsp: bool = True
+
+
+@router.post("/v1/subscribe")
+async def subscribe_char(
+    body: CharOpIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    await reg.send_command(state.agent_id, {"cmd": "subscribe", "address": body.address, "char": body.char})
+    return {"status": "ok"}
+
+
+@router.post("/v1/unsubscribe")
+async def unsubscribe_char(
+    body: CharOpIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    await reg.send_command(state.agent_id, {"cmd": "unsubscribe", "address": body.address, "char": body.char})
+    return {"status": "ok"}
+
+
+@router.post("/v1/read")
+async def read_char(
+    body: CharOpIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    req_id = uuid.uuid4().hex[:8]
+    result = await reg.send_and_wait(
+        state.agent_id,
+        {"cmd": "read", "address": body.address, "char": body.char},
+        req_id,
+        timeout=5.0,
+    )
+    return {"value": result.get("value"), "status": result.get("status", 0)}
+
+
+@router.post("/v1/write")
+async def write_char(
+    body: WriteIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    req_id = uuid.uuid4().hex[:8]
+    cmd: dict[str, Any] = {
+        "cmd": "write",
+        "address": body.address,
+        "char": body.char,
+        "value": body.value,
+        "rsp": body.rsp,
+    }
+    if body.rsp:
+        result = await reg.send_and_wait(state.agent_id, cmd, req_id, timeout=5.0)
+        return {"status": result.get("status", 0)}
+    await reg.send_command(state.agent_id, {**cmd, "req_id": req_id})
+    return {"status": "accepted"}
+
+
+# ---------------------------------------------------------------------------
+# Utility endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/v1/ping")
+async def ping(
+    body: EmptyIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    import time as _time
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    req_id = uuid.uuid4().hex[:8]
+    t0 = _time.monotonic()
+    result = await reg.send_and_wait(state.agent_id, {"cmd": "ping"}, req_id, timeout=5.0)
+    latency_ms = int((_time.monotonic() - t0) * 1000)
+    return {"latency_ms": latency_ms}
+
+
+class AskIn(BaseModel):
+    question: str
+
+
+@router.post("/v1/ask")
+async def ask(
+    body: AskIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    req_id = uuid.uuid4().hex[:8]
+    result = await reg.send_and_wait(
+        state.agent_id,
+        {"cmd": "ask", "question": body.question},
+        req_id,
+        timeout=60.0,
+    )
+    return {"answered": True, "value": result.get("value")}

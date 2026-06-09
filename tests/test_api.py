@@ -139,3 +139,79 @@ async def test_scan_start_includes_name_filter(client, registry):
     assert resp.status_code == 202
     cmd = conn.last_command()
     assert cmd["name_filter"] == "Niimbot"
+
+
+@pytest.mark.asyncio
+async def test_connect_sends_command(client, registry):
+    conn = MockAgentConnection()
+    agent_id = registry.register(conn)
+    resp = await client.post("/v1/connect", json={"address": "AA:BB:CC:DD:EE:FF"})
+    assert resp.status_code == 202
+    cmd = conn.last_command()
+    assert cmd["cmd"] == "connect"
+    assert cmd["address"] == "AA:BB:CC:DD:EE:FF"
+
+
+@pytest.mark.asyncio
+async def test_disconnect_sends_command(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post("/v1/disconnect", json={"address": "AA:BB:CC:DD:EE:FF"})
+    assert resp.status_code == 202
+    assert conn.last_command()["cmd"] == "disconnect"
+
+
+@pytest.mark.asyncio
+async def test_discover_sends_command(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post("/v1/discover", json={"address": "AA:BB:CC:DD:EE:FF"})
+    assert resp.status_code == 202
+    assert conn.last_command()["cmd"] == "discover"
+
+
+@pytest.mark.asyncio
+async def test_services_not_found(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.get("/v1/services", params={"address": "AA:BB:CC:DD:EE:FF"})
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_subscribe_sends_command(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post("/v1/subscribe", json={"address": "AA:BB:CC:DD:EE:FF", "char": "0000ff01-0000-1000-8000-00805f9b34fb"})
+    assert resp.status_code == 200
+    assert conn.last_command()["cmd"] == "subscribe"
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_sends_command(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post("/v1/unsubscribe", json={"address": "AA:BB:CC:DD:EE:FF", "char": "0000ff01-0000-1000-8000-00805f9b34fb"})
+    assert resp.status_code == 200
+    assert conn.last_command()["cmd"] == "unsubscribe"
+
+
+@pytest.mark.asyncio
+async def test_ping_timeout(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    # No pong will arrive — expect 504
+    resp = await client.post("/v1/ping", json={}, timeout=2.0)
+    assert resp.status_code == 504
+
+
+@pytest.mark.asyncio
+async def test_read_timeout(client, registry):
+    conn = MockAgentConnection()
+    registry.register(conn)
+    resp = await client.post(
+        "/v1/read",
+        json={"address": "AA:BB:CC:DD:EE:FF", "char": "0000ff01-0000-1000-8000-00805f9b34fb"},
+        timeout=2.0,
+    )
+    assert resp.status_code == 504
