@@ -83,6 +83,16 @@ def test_lint_unresolvable_requires(tmpdir_path):
     assert any("requires" in e.lower() or "unresolvable" in e.lower() for e in result.errors)
 
 
+def test_lint_non_dict_top_level_json(tmpdir_path):
+    # A JSON array / string / number at top level must produce a clean error, not crash.
+    (tmpdir_path / "arr.json").write_text("[]")
+    (tmpdir_path / "str.json").write_text('"hello"')
+    (tmpdir_path / "num.json").write_text("42")
+    result = lint_directory(tmpdir_path)  # must not raise
+    assert any("not an object" in e.lower() or "object" in e.lower() for e in result.errors)
+    assert len(result.errors) >= 3
+
+
 def test_lint_exit_code(tmpdir_path, monkeypatch):
     import sys
     from tools.lint_templates import main

@@ -67,6 +67,10 @@ def lint_directory(directory: pathlib.Path, is_community_pr: bool = False) -> Li
             result.errors.append(f"{path}: JSON parse error: {exc}")
             continue
 
+        if not isinstance(data, dict):
+            result.errors.append(f"{path}: top-level JSON is not an object")
+            continue
+
         schema_ver = data.get("schema_version")
         if schema_ver not in SUPPORTED_SCHEMA_VERSIONS:
             result.errors.append(
