@@ -426,3 +426,87 @@ async def set_agent_view(agent_id: str, body: SetViewIn, request: Request):
         "view": body.view,
     })
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# RE capture session endpoints
+# ---------------------------------------------------------------------------
+
+def _re_store(request: Request):
+    store = getattr(request.app.state, "re_store", None)
+    if store is None:
+        from broker.re_session import ReSessionStore
+        request.app.state.re_store = ReSessionStore()
+        store = request.app.state.re_store
+    return store
+
+
+class ReStartIn(BaseModel):
+    address: str
+
+
+class ReScaffoldIn(BaseModel):
+    session_id: str
+    device_name: str = "Unknown"
+    namespace: str = "contrib"
+
+
+class ReSampleIn(BaseModel):
+    session_id: str
+    char_uuid: str
+    value_hex: str
+
+
+@router.post("/v1/re/session/start", status_code=201)
+async def re_start(
+    body: ReStartIn,
+    request: Request,
+    agent: str | None = Query(default=None),
+):
+    reg = _registry(request)
+    state = reg.resolve_agent(agent)
+    store = _re_store(request)
+    session = store.create(agent_id=state.agent_id, address=body.address)
+    session.start()
+    return {"session_id": session.session_id, "address": body.address, "agent_id": state.agent_id}
+
+
+@router.post("/v1/re/session/sample")
+async def re_add_sample(body: ReSampleIn, request: Request):
+    store = _re_store(request)
+    session = store.get(body.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {body.session_id!r} not found"})
+    session.add_sample(body.char_uuid, body.value_hex)
+    return {"status": "ok", "sample_count": len(session.samples_for(body.char_uuid))}
+
+
+@router.post("/v1/re/session/analyse")
+async def re_analyse(body: dict, request: Request):
+    session_id = body.get("session_id")
+    store = _re_store(request)
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {session_id!r} not found"})
+    return session.analyse()
+
+
+@router.post("/v1/re/session/scaffold")
+async def re_scaffold(body: ReScaffoldIn, request: Request):
+    store = _re_store(request)
+    session = store.get(body.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {body.session_id!r} not found"})
+    return session.scaffold(device_name=body.device_name, namespace=body.namespace)
+
+
+@router.get("/v1/re/session/export")
+async def re_export(
+    request: Request,
+    session_id: str = Query(...),
+):
+    store = _re_store(request)
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "not_found", "message": f"Session {session_id!r} not found"})
+    return session.export_tshark()

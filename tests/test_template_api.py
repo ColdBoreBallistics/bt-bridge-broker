@@ -225,3 +225,36 @@ async def test_set_agent_view_unknown_agent_404(client):
         json={"address": "AA:BB:CC:DD:EE:FF", "view": "metric"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_re_session_full_flow(client, registry):
+    from tests.helpers import MockAgentConnection
+    conn = MockAgentConnection()
+    registry.register(conn)
+    # start
+    resp = await client.post("/v1/re/session/start", json={"address": "AA:BB:CC:DD:EE:FF"})
+    assert resp.status_code == 201
+    sid = resp.json()["session_id"]
+    # sample
+    resp = await client.post("/v1/re/session/sample", json={"session_id": sid, "char_uuid": "0000ff01-0000-1000-8000-00805f9b34fb", "value_hex": "55aa0102"})
+    assert resp.status_code == 200
+    assert resp.json()["sample_count"] == 1
+    # analyse
+    resp = await client.post("/v1/re/session/analyse", json={"session_id": sid})
+    assert resp.status_code == 200
+    assert "0000ff01-0000-1000-8000-00805f9b34fb" in resp.json()
+    # scaffold
+    resp = await client.post("/v1/re/session/scaffold", json={"session_id": sid, "device_name": "Test Dev", "namespace": "contrib"})
+    assert resp.status_code == 200
+    assert resp.json()["type"] == "display"
+    # export
+    resp = await client.get("/v1/re/session/export", params={"session_id": sid})
+    assert resp.status_code == 200
+    assert resp.json()["_bt_bridge_export"] is True
+
+
+@pytest.mark.asyncio
+async def test_re_session_sample_unknown_session_404(client):
+    resp = await client.post("/v1/re/session/sample", json={"session_id": "nope", "char_uuid": "0000ff01-0000-1000-8000-00805f9b34fb", "value_hex": "01"})
+    assert resp.status_code == 404
