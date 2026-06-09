@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     registry = AgentRegistry()
     template_registry = TemplateRegistry()
     template_registry.load()
+    registry.set_template_registry(template_registry)
 
     tcp_server = await asyncio.start_server(
         lambda r, w: handle_agent(r, w, registry),

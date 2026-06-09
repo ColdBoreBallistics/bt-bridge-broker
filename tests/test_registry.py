@@ -208,3 +208,63 @@ async def test_tcp_handle_agent_registers_and_publishes():
         if e.get("event") in ("agent_connected", "agent_disconnected"):
             assert "ts" in e
     registry.unsubscribe(token)
+
+
+@pytest.mark.asyncio
+async def test_tcp_push_templates_and_services_discovered(tmp_path):
+    """With a template registry attached, the broker pushes templates on connect and
+    responds to services_discovered with apply_template, caching services."""
+    import json as _json
+    from broker.agent_tcp import handle_agent
+    from broker.template_registry import TemplateRegistry
+
+    # Build a tiny catalog: one device template matching service 0000abcd.
+    (tmp_path / "device.json").write_text(_json.dumps({
+        "schema_version": 1, "id": "builtin.demo-device", "version": "1.0.0", "type": "device",
+        "name": "Demo", "signature": {"service_uuids": ["0000abcd-0000-1000-8000-00805f9b34fb"]},
+        "variants": [],
+    }))
+    tr = TemplateRegistry(templates_dir=tmp_path)
+    tr.load()
+
+    registry = AgentRegistry()
+    registry.set_template_registry(tr)
+
+    server = await asyncio.start_server(
+        lambda r, w: handle_agent(r, w, registry),
+        host="127.0.0.1", port=0,
+    )
+    host, port = server.sockets[0].getsockname()[:2]
+    async with server:
+        reader, writer = await asyncio.open_connection(host, port)
+
+        # 1) register ack
+        register = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert register["cmd"] == "register"
+        agent_id = register["agent_id"]
+
+        # 2) push_templates manifest (sent right after register)
+        push = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert push["cmd"] == "push_templates"
+        assert any(m["id"] == "builtin.demo-device" for m in push["manifest"])
+
+        # 3) agent reports services_discovered for a device exposing 0000abcd
+        writer.write((_json.dumps({
+            "event": "services_discovered",
+            "address": "AA:BB:CC:DD:EE:FF",
+            "services": [{"uuid": "0000abcd-0000-1000-8000-00805f9b34fb", "chars": []}],
+        }) + "\n").encode())
+        await writer.drain()
+
+        # 4) broker replies with apply_template for the matched device
+        apply = _json.loads(await asyncio.wait_for(reader.readline(), timeout=1.0))
+        assert apply["cmd"] == "apply_template"
+        assert apply["device_template_id"] == "builtin.demo-device"
+        assert apply["address"] == "AA:BB:CC:DD:EE:FF"
+
+        # services were cached on the agent state
+        state = registry.get_agent(agent_id)
+        assert "AA:BB:CC:DD:EE:FF" in state.services
+
+        writer.close()
+        await writer.wait_closed()

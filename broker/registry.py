@@ -51,6 +51,14 @@ class AgentRegistry:
         self._ring_max = 1000
         self._ring_ttl_ms = 60_000
         self._waiters: dict[str, asyncio.Future[Any]] = {}
+        self._template_registry: Any = None
+
+    def set_template_registry(self, tr: Any) -> None:
+        self._template_registry = tr
+
+    @property
+    def template_registry(self) -> Any:
+        return self._template_registry
 
     # ------------------------------------------------------------------
     # Lifecycle

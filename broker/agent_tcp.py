@@ -51,6 +51,14 @@ async def handle_agent(
     # Send registration acknowledgement
     await conn.send(json.dumps({"cmd": "register", "agent_id": agent_id}))
 
+    # Template push — send the manifest of available templates (if a registry is attached).
+    template_registry = registry.template_registry
+    if template_registry is not None:
+        manifest = template_registry.manifest()
+        if manifest:
+            await conn.send(json.dumps({"cmd": "push_templates", "manifest": manifest}))
+            log.debug("Sent push_templates to %s (%d templates)", agent_id, len(manifest))
+
     # Notify WebSocket subscribers
     registry.publish(agent_id, {"event": "agent_connected", "peer": f"{peer[0]}:{peer[1]}", "ts": int(time.time() * 1000)})
 
@@ -70,6 +78,48 @@ async def handle_agent(
             except json.JSONDecodeError:
                 log.warning("Malformed JSON from %s: %r", agent_id, raw[:120])
                 continue
+
+            etype = event.get("event")
+
+            # template_request — respond with template_data for each requested id+version.
+            if etype == "template_request" and template_registry is not None:
+                for item in event.get("ids", []):
+                    tid = item.get("id")
+                    ver = item.get("version")
+                    content = template_registry.get(tid, ver) if tid and ver else None
+                    if content is not None:
+                        await conn.send(json.dumps({
+                            "cmd": "template_data", "id": tid, "version": ver, "content": content,
+                        }))
+                    else:
+                        log.warning("Agent %s requested unknown template %s@%s", agent_id, tid, ver)
+                continue  # not published to the WS fan-out
+
+            # services_discovered — cache services + run signature match → apply_template.
+            if etype == "services_discovered" and template_registry is not None:
+                services = event.get("services", [])
+                service_uuids = [s.get("uuid") for s in services if s.get("uuid")]
+                address = event.get("address", "")
+                state = registry.get_agent(agent_id)
+                if state is not None:
+                    state.services[address] = services
+                matches = template_registry.match_device(service_uuids)
+                if matches:
+                    best = matches[0]
+                    await conn.send(json.dumps({
+                        "cmd": "apply_template",
+                        "address": address,
+                        "device_template_id": best["device_template_id"],
+                        "version": best["version"],
+                        "variant_id": best["variant_id"],
+                    }))
+                    log.info("Matched %s to %s@%s variant=%s (%s)", address,
+                             best["device_template_id"], best["version"],
+                             best["variant_id"], best["confidence"])
+                else:
+                    log.info("No template match for %s — agent uses raw GATT", address)
+                # fall through: services_discovered IS still published + update_state'd
+
             registry.update_state(agent_id, event)
             registry.publish(agent_id, event)
     except Exception as exc:
