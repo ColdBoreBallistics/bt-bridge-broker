@@ -298,15 +298,18 @@ class TemplateRegistry:
         The template id and version are validated as safe path components first — a
         malicious id (e.g. containing '..' or '/') is rejected with ValueError rather
         than allowed to escape the templates/ directory.
+
+        The draft is written to disk only; call load() (or the /v1/templates/reload
+        endpoint) to make it visible in the in-memory registry.
         """
         tid = content.get("id", "")
         ver = content.get("version", "")
         ttype = content.get("type", "unknown")
-        if not _SAFE_ID_RE.match(tid):
+        if not isinstance(tid, str) or not _SAFE_ID_RE.match(tid):
             raise ValueError(f"unsafe or missing template id: {tid!r}")
-        if not _SAFE_VERSION_RE.match(ver):
+        if not isinstance(ver, str) or not _SAFE_VERSION_RE.match(ver):
             raise ValueError(f"unsafe or missing template version: {ver!r}")
-        if not _SAFE_ID_RE.match(ttype):
+        if not isinstance(ttype, str) or not _SAFE_ID_RE.match(ttype):
             raise ValueError(f"unsafe or missing template type: {ttype!r}")
 
         namespace, _, local = tid.partition(".")

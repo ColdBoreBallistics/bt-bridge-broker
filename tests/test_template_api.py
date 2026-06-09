@@ -10,6 +10,7 @@ from httpx import AsyncClient, ASGITransport
 from broker.registry import AgentRegistry
 from broker.template_registry import TemplateRegistry
 from broker.api.app import create_app
+from tests.helpers import MockAgentConnection
 
 
 def make_device_template(tid="builtin.test-device", ver="1.0.0"):
@@ -169,3 +170,58 @@ def test_match_route_declared_before_template_id():
     assert _index("match") < _index("{template_id}"), (
         "/v1/templates/match must be declared before /v1/templates/{template_id}"
     )
+
+
+@pytest.mark.asyncio
+async def test_draft_non_string_version_returns_422_not_500(client):
+    # A non-string version must yield 422 (validated), never a 500 leaking a TypeError.
+    draft = {
+        "schema_version": 1,
+        "id": "contrib.numbered",
+        "version": 1.0,            # not a string
+        "type": "display",
+        "name": "Numbered",
+    }
+    resp = await client.post("/v1/templates/draft", json=draft)
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body.get("error") == "invalid"
+    assert "internal_error" not in body.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_draft_non_string_type_returns_422(client):
+    draft = {
+        "schema_version": 1,
+        "id": "contrib.typed",
+        "version": "1.0.0",
+        "type": 123,               # not a string
+        "name": "Typed",
+    }
+    resp = await client.post("/v1/templates/draft", json=draft)
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_set_agent_view_sends_command(client, registry):
+    conn = MockAgentConnection()
+    agent_id = registry.register(conn)
+    resp = await client.post(
+        f"/v1/agents/{agent_id}/view",
+        json={"address": "AA:BB:CC:DD:EE:FF", "view": "imperial"},
+    )
+    assert resp.status_code == 200
+    cmd = conn.last_command()
+    assert cmd is not None
+    assert cmd["cmd"] == "set_view"
+    assert cmd["address"] == "AA:BB:CC:DD:EE:FF"
+    assert cmd["view"] == "imperial"
+
+
+@pytest.mark.asyncio
+async def test_set_agent_view_unknown_agent_404(client):
+    resp = await client.post(
+        "/v1/agents/agent-999/view",
+        json={"address": "AA:BB:CC:DD:EE:FF", "view": "metric"},
+    )
+    assert resp.status_code == 404

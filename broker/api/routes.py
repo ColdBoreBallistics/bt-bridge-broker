@@ -393,7 +393,7 @@ async def save_draft_template(body: dict, request: Request):
         raise HTTPException(status_code=422, detail={"error": "invalid", "message": "Template must have id and version"})
     try:
         path = tr.save_draft(body)
-    except ValueError as exc:
+    except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid", "message": str(exc)})
     return {"status": "saved", "path": str(path)}
 
