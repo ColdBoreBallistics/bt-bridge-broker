@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 
@@ -107,6 +107,8 @@ class AgentRegistry:
         for entry in state.scan_results:
             if entry.address == address:
                 entry.rssi = event.get("rssi", entry.rssi)
+                if event.get("name"):
+                    entry.name = event.get("name")
                 entry.last_seen_ms = now
                 return
         state.scan_results.append(

@@ -72,3 +72,18 @@ def test_resolve_agent_by_id_not_found(registry):
     with pytest.raises(HTTPException) as exc:
         registry.resolve_agent("agent-999")
     assert exc.value.status_code == 404
+
+
+def test_scan_result_name_refreshes_on_later_event(registry, conn):
+    agent_id = registry.register(conn)
+    # First advertisement: no name
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -70})
+    # Later advertisement: name appears
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -68, "name": "MyDevice"})
+    results = registry.get_scan_results(agent_id)
+    assert len(results) == 1
+    assert results[0].name == "MyDevice"
+    # A later nameless advertisement must NOT wipe the name
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -72})
+    results = registry.get_scan_results(agent_id)
+    assert results[0].name == "MyDevice"
