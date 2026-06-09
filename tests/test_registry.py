@@ -87,3 +87,62 @@ def test_scan_result_name_refreshes_on_later_event(registry, conn):
     registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -72})
     results = registry.get_scan_results(agent_id)
     assert results[0].name == "MyDevice"
+
+
+@pytest.mark.asyncio
+async def test_send_and_wait_resolves_on_event(registry, conn):
+    agent_id = registry.register(conn)
+    import uuid as _uuid
+    req_id = _uuid.uuid4().hex[:8]
+    # Schedule a delayed event injection
+    async def inject():
+        await asyncio.sleep(0.05)
+        registry.update_state(agent_id, {"event": "read_result", "req_id": req_id, "value": "ff"})
+    asyncio.create_task(inject())
+    result = await registry.send_and_wait(agent_id, {"cmd": "read"}, req_id, timeout=1.0)
+    assert result["req_id"] == req_id
+    assert result["value"] == "ff"
+
+
+@pytest.mark.asyncio
+async def test_send_and_wait_timeout(registry, conn):
+    agent_id = registry.register(conn)
+    with pytest.raises(Exception) as exc:
+        await registry.send_and_wait(agent_id, {"cmd": "read"}, "noreply", timeout=0.05)
+    assert exc.value.status_code == 504
+
+
+def test_scan_result_dedup_updates_rssi(registry, conn):
+    agent_id = registry.register(conn)
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -70, "name": "Device"})
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -65, "name": "Device"})
+    results = registry.get_scan_results(agent_id)
+    assert len(results) == 1
+    assert results[0].rssi == -65
+
+
+def test_scan_result_dedup_new_address(registry, conn):
+    agent_id = registry.register(conn)
+    registry.update_state(agent_id, {"event": "scan_result", "address": "AA:BB:CC:DD:EE:FF", "rssi": -70})
+    registry.update_state(agent_id, {"event": "scan_result", "address": "11:22:33:44:55:66", "rssi": -80})
+    results = registry.get_scan_results(agent_id)
+    assert len(results) == 2
+
+
+def test_ring_buffer_replay(registry, conn):
+    agent_id = registry.register(conn)
+    registry.publish(agent_id, {"event": "notification", "value": "01"})
+    registry.publish(agent_id, {"event": "notification", "value": "02"})
+    buffered = registry.buffered_events()
+    assert len(buffered) == 2
+
+
+def test_publish_fan_out(registry, conn):
+    agent_id = registry.register(conn)
+    q, token = registry.subscribe()
+    registry.publish(agent_id, {"event": "notification", "value": "ab"})
+    registry.unsubscribe(token)
+    assert not q.empty()
+    envelope = q.get_nowait()
+    assert envelope["agent_id"] == agent_id
+    assert envelope["value"] == "ab"
