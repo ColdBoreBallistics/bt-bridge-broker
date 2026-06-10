@@ -1,0 +1,9 @@
+# Code owners for bt-bridge-broker.
+# These owners are requested for review on every PR. See
+# https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repo.
+*       @ColdBoreBallistics/all-dev
+
+# The agent wire protocol is shared with the agent apps — changes warrant extra care.
+/PROTOCOL.md    @ColdBoreBallistics/all-dev

@@ -1,0 +1,29 @@
+name: CI
+
+# Runs the test suite and template lint on every push and pull request.
+
+on:
+  push:
+    branches: [main, "b*"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (runtime + dev/test)
+        run: pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest -q
+
+      - name: Lint templates dir (if any fetched templates are present)
+        run: python3 tools/lint_templates.py templates/
