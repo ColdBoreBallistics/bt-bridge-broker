@@ -18,7 +18,7 @@ def create_app(registry: AgentRegistry | None = None) -> FastAPI:
 
     app = FastAPI(
         title="BT Bridge Broker",
-        version="1.2.0",
+        version="0.9.0",
         description="REST + WebSocket API for the BT Bridge hardware test harness.",
     )
     if registry is not None:
