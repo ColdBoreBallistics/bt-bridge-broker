@@ -46,8 +46,8 @@ into a two-tier FastAPI service, plus the template system and on-demand template
 - Dependencies split into `requirements.txt` (runtime) and `requirements-dev.txt` (test).
 
 ### Removed
-- `ble_server.py` — replaced by the `broker/` package. (The `examples/` scripts that imported it
-  are tracked for migration to the REST API in CBB-111.)
+- `ble_server.py` — replaced by the `broker/` package. The previous `examples/` scripts that
+  imported it were removed; REST/WebSocket API examples will be added in a future release.
 
 [Unreleased]: https://github.com/ColdBoreBallistics/bt-bridge-broker/compare/v0.9.0...HEAD
 [0.9.0]: https://github.com/ColdBoreBallistics/bt-bridge-broker/releases/tag/v0.9.0

@@ -608,8 +608,7 @@ These are provided as a convenience reference for test script authors.
 Confirmed 16-byte little-endian notify frame (~1 Hz): wind speed `uint16_le` at offset 0
 (`raw / 1024 = mph`), temperature `int16_le` at offset 8 (`× 0.1 = °C`), humidity `uint8` at
 offset 10 (`%`), pressure `uint16_le` at offset 12 (`× 0.1 = hPa`). There is no wind-direction and
-no density-altitude field. Full frame spec is in the internal Engine Documentation (OneDrive —
-confidential).
+no density-altitude field. The complete frame specification is maintained internally.
 
 ### BLE Battery Service (standard)
 
