@@ -1,5 +1,5 @@
 # BT Bridge Broker — development & test dependencies
 -r requirements.txt
-pytest>=8.2.0
+pytest>=9.1.0
 pytest-asyncio>=0.23.0
 httpx-ws>=0.6.0
