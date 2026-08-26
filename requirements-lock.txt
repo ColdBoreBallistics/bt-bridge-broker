@@ -16,7 +16,7 @@ pluggy==1.6.0
 pydantic==2.13.4
 pydantic-settings==2.15.0
 pydantic_core==2.48.0
-Pygments==2.20.0
+Pygments==2.21.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
 python-dotenv==1.2.3
