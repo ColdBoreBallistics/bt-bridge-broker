@@ -1,6 +1,6 @@
 # BT Bridge Broker — runtime dependencies
 # Python 3.11 or later required (match statements, type union syntax).
-fastapi>=0.141.1
+fastapi>=0.142.2
 uvicorn[standard]>=0.54.0
 pydantic-settings>=2.15.0
 packaging>=26.3
